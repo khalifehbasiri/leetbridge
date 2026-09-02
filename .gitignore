@@ -1,0 +1,30 @@
+# Dependencies and tooling
+node_modules/
+.cache/
+coverage/
+
+# Build output
+dist/
+*.zip
+*.crx
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp

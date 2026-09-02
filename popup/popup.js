@@ -56,4 +56,57 @@ function renderProblemData(data) {
         : "Waiting for a real submission";
 }
 
+async function loadGitHubStatus() {
+    const response = await chrome.runtime.sendMessage({
+        type: "GITHUB_GET_STATUS"
+    });
+    const statusElement = document.getElementById("github-status");
+    const repositoryElement = document.getElementById("github-repository");
+    const syncElement = document.getElementById("github-sync");
+    const button = document.getElementById("github-button");
+
+    if (!response?.ok) {
+        statusElement.textContent = response?.error ?? "Unable to check GitHub";
+        return;
+    }
+
+    const status = response.status;
+
+    if (!status.configured) {
+        statusElement.textContent = "GitHub connection unavailable";
+        button.textContent = "View details";
+        return;
+    }
+
+    if (!status.repository) {
+        statusElement.textContent = status.authenticated
+            ? "Choose a repository"
+            : "Not connected";
+        button.textContent = status.authenticated
+            ? "Select repository"
+            : "Connect GitHub";
+        return;
+    }
+
+    statusElement.textContent = "✓ Connected";
+    repositoryElement.textContent = status.repository.fullName;
+    repositoryElement.hidden = false;
+    button.textContent = "Manage connection";
+
+    if (status.lastSync) {
+        syncElement.textContent = status.lastSync.ok
+            ? `Last sync: ${status.lastSync.path}`
+            : `Sync error: ${status.lastSync.error}`;
+        syncElement.hidden = false;
+    }
+}
+
+document.getElementById("github-button").addEventListener("click", async () => {
+    await chrome.tabs.create({
+        url: chrome.runtime.getURL("github/connect.html")
+    });
+    window.close();
+});
+
 detectLeetCode();
+loadGitHubStatus();

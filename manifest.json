@@ -1,18 +1,25 @@
 {
   "name": "LeetBridge",
   "description": "Sync accepted LeetCode solutions to GitHub.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "manifest_version": 3,
+  "minimum_chrome_version": "111",
+  "incognito": "not_allowed",
 
   "permissions": [
-    "tabs",
+    "activeTab",
     "storage"
+  ],
+
+  "host_permissions": [
+    "https://github.com/*",
+    "https://api.github.com/*"
   ],
 
   "content_scripts": [
     {
       "matches": [
-        "https://leetcode.com/*"
+        "https://leetcode.com/problems/*"
       ],
       "js": [
         "content/page/submission-bridge.js"
@@ -22,7 +29,7 @@
     },
     {
       "matches": [
-        "https://leetcode.com/*"
+        "https://leetcode.com/problems/*"
       ],
       "js": [
         "content/extractors/problem-name.js",
@@ -44,5 +51,9 @@
   "action": {
     "default_popup": "popup/popup.html",
     "default_icon": "resources/LeetBridge-logo.png"
+  },
+
+  "icons": {
+    "128": "resources/LeetBridge-logo.png"
   }
 }

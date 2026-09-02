@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect LeetBridge to GitHub</title>
+    <link rel="stylesheet" href="connect.css">
+</head>
+<body>
+    <main>
+        <h1>Connect LeetBridge to GitHub</h1>
+        <p class="intro">
+            Sign in to GitHub and choose where LeetBridge should save your
+            accepted solutions. Submitted code is sent directly to that
+            repository. No tokens or code setup required.
+        </p>
+
+        <p id="message" class="message" aria-live="polite">Checking connection...</p>
+
+        <section id="unavailable-panel" hidden>
+            <h2>GitHub connection unavailable</h2>
+            <p>This version of LeetBridge cannot connect to GitHub.</p>
+        </section>
+
+        <section id="setup-panel" hidden>
+            <div class="step">
+                <span class="step-number">1</span>
+                <div>
+                    <h2>Grant repository access</h2>
+                    <p>
+                        On GitHub, choose the repository LeetBridge may access.
+                        A dedicated solutions repository is recommended.
+                    </p>
+                    <button id="install-button" type="button">Choose repository on GitHub</button>
+                </div>
+            </div>
+
+            <div class="step">
+                <span class="step-number">2</span>
+                <div>
+                    <h2>Connect your account</h2>
+                    <p>Approve LeetBridge on GitHub using a short verification code.</p>
+                    <button id="authenticate-button" type="button">Connect GitHub</button>
+                </div>
+            </div>
+        </section>
+
+        <section id="device-panel" hidden>
+            <h2>Authorize LeetBridge</h2>
+            <p>Enter this code on GitHub:</p>
+            <button id="user-code" class="user-code" type="button" title="Copy code"></button>
+            <p>
+                <a id="verification-link" target="_blank" rel="noreferrer">Open GitHub authorization</a>
+            </p>
+            <p class="muted">Waiting for authorization...</p>
+        </section>
+
+        <section id="repository-panel" hidden>
+            <h2>Select the repository</h2>
+            <p>
+                Only repositories you granted to LeetBridge appear here. For
+                the smallest access scope, use a dedicated solutions repository.
+            </p>
+            <label for="repository-select">Repository</label>
+            <select id="repository-select"></select>
+            <div class="button-row">
+                <button id="save-repository-button" type="button">Use repository</button>
+                <button id="refresh-repositories-button" class="secondary" type="button">Refresh</button>
+            </div>
+        </section>
+
+        <section id="connected-panel" hidden>
+            <h2>Connected</h2>
+            <p>Accepted solutions will sync to:</p>
+            <p id="connected-repository" class="repository-name"></p>
+            <p class="muted">
+                Disconnecting removes GitHub credentials stored by this
+                browser. You can separately revoke repository access in GitHub.
+            </p>
+            <button id="disconnect-button" class="danger" type="button">Disconnect GitHub</button>
+        </section>
+    </main>
+
+    <script src="connect.js"></script>
+</body>
+</html>

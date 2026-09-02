@@ -69,11 +69,10 @@ function handleUrlChange() {
 
     if (snapshot !== lastSnapshot) {
         lastSnapshot = snapshot;
-        console.log("LeetBridge problem data:", data);
         persistProblemData(data);
 
         if (data.submission.accepted) {
-            console.log("Accepted detected ✓", data);
+            console.log("LeetBridge detected an accepted submission ✓");
         }
     }
 }

@@ -15,6 +15,11 @@ h1 {
     font-weight: 600;
 }
 
+h2 {
+    font-size: 14px;
+    margin: 0 0 8px;
+}
+
 dl {
     display: grid;
     gap: 12px;
@@ -38,4 +43,36 @@ dt {
 dd {
     font-size: 14px;
     margin: 0;
+}
+
+#github-panel {
+    border-top: 1px solid #d0d7de;
+    margin-top: 16px;
+    padding-top: 14px;
+}
+
+#github-panel p {
+    font-size: 13px;
+    margin: 6px 0;
+}
+
+#github-repository {
+    font-family: monospace;
+    font-weight: 700;
+}
+
+#github-sync {
+    color: #59636e;
+}
+
+#github-button {
+    border: 1px solid #1f883d;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-top: 8px;
+    padding: 7px 11px;
+    background: #1f883d;
+    color: #fff;
+    font: inherit;
+    font-weight: 600;
 }
