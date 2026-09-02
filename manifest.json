@@ -1,11 +1,24 @@
 {
   "name": "LeetBridge",
   "description": "Sync accepted LeetCode solutions to GitHub.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "manifest_version": 3,
+
   "permissions": [
     "tabs"
   ],
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://leetcode.com/problems/*"
+      ],
+      "js": [
+        "content/leetcode.js"
+      ]
+    }
+  ],
+
   "action": {
     "default_popup": "popup/popup.html",
     "default_icon": "resources/LeetBridge-logo.png"
