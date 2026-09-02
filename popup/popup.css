@@ -314,12 +314,21 @@ button:disabled {
 
 .progress-track span {
     display: block;
-    width: 35%;
+    width: 100%;
     height: 100%;
     border-radius: inherit;
+    background: #20a464;
+}
+
+.import-panel.running .progress-track span {
+    width: 35%;
     background: linear-gradient(90deg, #ff8a00, #1479db);
     animation: progress 1.5s ease-in-out infinite alternate;
 }
+
+.import-panel.failed .progress-track span { background: #cf222e; }
+.import-panel.canceled .progress-track span { background: #9aa7b7; }
+.import-panel.warning .progress-track span { background: #bf8700; }
 
 .spinner {
     width: 16px;

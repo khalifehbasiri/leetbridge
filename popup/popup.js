@@ -174,6 +174,19 @@ function renderImportState() {
     const running = state?.status === "running";
 
     clearTimeout(importRefreshTimer);
+    elements.importPanel.classList.toggle("running", running);
+    elements.importPanel.classList.toggle(
+        "failed",
+        state?.status === "failed"
+    );
+    elements.importPanel.classList.toggle(
+        "canceled",
+        state?.status === "canceled"
+    );
+    elements.importPanel.classList.toggle(
+        "warning",
+        state?.status === "complete_with_errors"
+    );
     elements.importPanel.hidden = !state;
     elements.importSpinner.hidden = !running;
     elements.cancelImportButton.hidden = !running;

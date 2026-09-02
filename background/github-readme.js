@@ -1,4 +1,6 @@
 const ROOT_README_PATH = "README.md";
+const PROFILE_START_MARKER = "<!-- LEETBRIDGE_PROFILE_START -->";
+const PROFILE_END_MARKER = "<!-- LEETBRIDGE_PROFILE_END -->";
 const SOLUTIONS_START_MARKER = "<!-- SOLUTIONS_START -->";
 const SOLUTIONS_END_MARKER = "<!-- SOLUTIONS_END -->";
 
@@ -19,6 +21,34 @@ function escapeMarkdownTableText(value) {
 
 function unescapeMarkdownTableText(value) {
     return value.replace(/\\\|/g, "|").replace(/\\\\/g, "\\");
+}
+
+function normalizeDifficulty(value) {
+    const normalized = normalizeInlineText(value, "Unknown");
+
+    return ["Easy", "Medium", "Hard"].find((difficulty) => (
+        normalized.includes(difficulty)
+    )) ?? normalized;
+}
+
+function getDifficultyIcon(difficulty) {
+    return {
+        Easy: "🟢",
+        Medium: "🟡",
+        Hard: "🔴"
+    }[difficulty] ?? "⚪";
+}
+
+function escapeHtmlAttribute(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+}
+
+function escapeMermaidLabel(value) {
+    return normalizeInlineText(value, "Unknown").replace(/"/g, "'");
 }
 
 function buildProblemReadme(problem, solutions) {
@@ -136,7 +166,7 @@ function parseRootReadmeEntries(readme) {
             number: Number(problemMatch[1]),
             slug: problemMatch[2],
             title: unescapeMarkdownTableText(cells[1]),
-            difficulty: cells[2],
+            difficulty: normalizeDifficulty(cells[2]),
             solutions
         });
     }
@@ -149,7 +179,7 @@ function mergeProblemEntry(entries, problem, solutions) {
         number: problem.number ?? null,
         slug: problem.slug,
         title: normalizeInlineText(problem.title, problem.slug),
-        difficulty: normalizeInlineText(problem.difficulty, "Unknown"),
+        difficulty: normalizeDifficulty(problem.difficulty),
         solutions
     };
     const filteredEntries = entries.filter((entry) => (
@@ -185,6 +215,26 @@ function buildRootReadmeSection(entries) {
 
         return counts;
     }, { Easy: 0, Medium: 0, Hard: 0 });
+    const languageCounts = entries.reduce((counts, entry) => {
+        for (const solution of entry.solutions) {
+            const language = normalizeInlineText(solution.language, "Unknown");
+            counts.set(language, (counts.get(language) ?? 0) + 1);
+        }
+
+        return counts;
+    }, new Map());
+    const difficultyChart = Object.entries(difficultyCounts)
+        .filter(([, count]) => count > 0)
+        .map(([difficulty, count]) => (
+            `    "${escapeMermaidLabel(difficulty)}" : ${count}`
+        ));
+    const languageRows = [...languageCounts.entries()]
+        .sort((first, second) => (
+            second[1] - first[1] || first[0].localeCompare(second[0])
+        ))
+        .map(([language, count]) => (
+            `| ${escapeMarkdownTableText(language)} | ${count} |`
+        ));
     const solutionRows = entries.map((entry) => {
         const number = entry.number
             ? String(entry.number).padStart(4, "0")
@@ -195,7 +245,8 @@ function buildRootReadmeSection(entries) {
 
         return `| [${number}](https://leetcode.com/problems/${entry.slug}/) `
             + `| ${escapeMarkdownTableText(entry.title)} `
-            + `| ${escapeMarkdownTableText(entry.difficulty)} `
+            + `| ${getDifficultyIcon(entry.difficulty)} `
+            + `${escapeMarkdownTableText(entry.difficulty)} `
             + `| ${solutions || "None"} |`;
     });
     const problemLabel = entries.length === 1 ? "problem" : "problems";
@@ -207,11 +258,29 @@ function buildRootReadmeSection(entries) {
         "",
         `**${entries.length} ${problemLabel} solved**`,
         "",
-        "| Total | Easy | Medium | Hard |",
+        "| Total | 🟢 Easy | 🟡 Medium | 🔴 Hard |",
         "| ---: | ---: | ---: | ---: |",
         `| ${entries.length} | ${difficultyCounts.Easy} `
             + `| ${difficultyCounts.Medium} | ${difficultyCounts.Hard} |`,
         "",
+        ...(difficultyChart.length > 0 ? [
+            "### Difficulty breakdown",
+            "",
+            "```mermaid",
+            "pie showData",
+            "    title Solved problems by difficulty",
+            ...difficultyChart,
+            "```",
+            ""
+        ] : []),
+        ...(languageRows.length > 0 ? [
+            "### Languages",
+            "",
+            "| Language | Solutions |",
+            "| --- | ---: |",
+            ...languageRows,
+            ""
+        ] : []),
         "## Solutions",
         "",
         "| # | Title | Difficulty | Solution |",
@@ -222,6 +291,82 @@ function buildRootReadmeSection(entries) {
     ].join("\n");
 }
 
+function buildRepositoryProfileSection(leetcodeUsername) {
+    if (!leetcodeUsername) {
+        return "";
+    }
+
+    const username = encodeURIComponent(leetcodeUsername);
+    const safeUsername = escapeHtmlAttribute(leetcodeUsername);
+    const profileUrl = `https://leetcode.com/u/${username}/`;
+    const statsUrl = `https://leetcard.jacoblin.cool/${username}`
+        + "?theme=transparent&font=Inter";
+    const heatmapUrl = `https://leetcard.jacoblin.cool/${username}`
+        + "?ext=heatmap&theme=transparent";
+
+    return [
+        PROFILE_START_MARKER,
+        "",
+        "## LeetCode Profile",
+        "",
+        "<p align=\"center\">",
+        `  <a href=\"${profileUrl}\">`,
+        `    <img src=\"${statsUrl}\" alt=\"LeetCode stats for ${safeUsername}\" width=\"49%\">`,
+        "  </a>",
+        `  <a href=\"${profileUrl}\">`,
+        `    <img src=\"${heatmapUrl}\" alt=\"LeetCode activity for ${safeUsername}\" width=\"49%\">`,
+        "  </a>",
+        "</p>",
+        "",
+        PROFILE_END_MARKER
+    ].join("\n");
+}
+
+function buildLegacyRepositoryProfileSection(leetcodeUsername) {
+    const username = encodeURIComponent(leetcodeUsername);
+    const profileUrl = `https://leetcode.com/u/${username}/`;
+
+    return [
+        "## LeetCode Profile",
+        "",
+        `[![LeetCode Stats](https://leetcard.jacoblin.cool/${username}?theme=light&font=Inter)](${profileUrl})`,
+        "",
+        `[![LeetCode Activity](https://leetcard.jacoblin.cool/${username}?ext=heatmap&theme=light)](${profileUrl})`
+    ].join("\n");
+}
+
+function updateRepositoryProfileSection(existingReadme, leetcodeUsername) {
+    if (!leetcodeUsername) {
+        return existingReadme;
+    }
+
+    const generatedSection = buildRepositoryProfileSection(leetcodeUsername);
+    const startIndex = existingReadme.indexOf(PROFILE_START_MARKER);
+    const endIndex = existingReadme.indexOf(PROFILE_END_MARKER);
+
+    if ((startIndex === -1) !== (endIndex === -1) || endIndex < startIndex) {
+        throw new Error(
+            "The repository README has invalid LeetBridge profile markers"
+        );
+    }
+
+    if (startIndex !== -1) {
+        const suffixIndex = endIndex + PROFILE_END_MARKER.length;
+
+        return existingReadme.slice(0, startIndex)
+            + generatedSection
+            + existingReadme.slice(suffixIndex);
+    }
+
+    const legacySection = buildLegacyRepositoryProfileSection(
+        leetcodeUsername
+    );
+
+    return existingReadme.includes(legacySection)
+        ? existingReadme.replace(legacySection, generatedSection)
+        : existingReadme;
+}
+
 function buildRepositoryReadmeIntroduction(leetcodeUsername) {
     const lines = [
         "# LeetCode Solutions",
@@ -230,16 +375,9 @@ function buildRepositoryReadmeIntroduction(leetcodeUsername) {
     ];
 
     if (leetcodeUsername) {
-        const username = encodeURIComponent(leetcodeUsername);
-        const profileUrl = `https://leetcode.com/u/${username}/`;
-
         lines.push(
             "",
-            "## LeetCode Profile",
-            "",
-            `[![LeetCode Stats](https://leetcard.jacoblin.cool/${username}?theme=light&font=Inter)](${profileUrl})`,
-            "",
-            `[![LeetCode Activity](https://leetcard.jacoblin.cool/${username}?ext=heatmap&theme=light)](${profileUrl})`
+            buildRepositoryProfileSection(leetcodeUsername)
         );
     }
 
@@ -251,15 +389,19 @@ function updateRootReadme(
     generatedSection,
     leetcodeUsername = null
 ) {
-    const startIndex = existingReadme.indexOf(SOLUTIONS_START_MARKER);
-    const endIndex = existingReadme.indexOf(SOLUTIONS_END_MARKER);
+    const readme = updateRepositoryProfileSection(
+        existingReadme,
+        leetcodeUsername
+    );
+    const startIndex = readme.indexOf(SOLUTIONS_START_MARKER);
+    const endIndex = readme.indexOf(SOLUTIONS_END_MARKER);
     const hasDuplicateStart = startIndex !== -1
-        && existingReadme.indexOf(
+        && readme.indexOf(
             SOLUTIONS_START_MARKER,
             startIndex + SOLUTIONS_START_MARKER.length
         ) !== -1;
     const hasDuplicateEnd = endIndex !== -1
-        && existingReadme.indexOf(
+        && readme.indexOf(
             SOLUTIONS_END_MARKER,
             endIndex + SOLUTIONS_END_MARKER.length
         ) !== -1;
@@ -278,12 +420,12 @@ function updateRootReadme(
     if (startIndex !== -1) {
         const suffixIndex = endIndex + SOLUTIONS_END_MARKER.length;
 
-        return existingReadme.slice(0, startIndex)
+        return readme.slice(0, startIndex)
             + generatedSection
-            + existingReadme.slice(suffixIndex);
+            + readme.slice(suffixIndex);
     }
 
-    const existing = existingReadme.trimEnd();
+    const existing = readme.trimEnd();
     const introduction = existing
         || buildRepositoryReadmeIntroduction(leetcodeUsername);
 

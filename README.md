@@ -15,6 +15,8 @@ repository selected by the user.
 - Syncs accepted solutions directly from Chrome to GitHub.
 - Prevents duplicate syncs using LeetCode submission IDs.
 - Maintains problem READMEs and a repository-wide solution index.
+- Generates profile cards, an activity heatmap, a difficulty chart, and a
+  language summary for the solutions repository.
 - Imports the latest accepted historical solution for each problem and language.
 - Rebuilds the root README from solution folders when recovery is needed.
 - Includes Auto Sync and README update controls in the popup.
@@ -87,9 +89,6 @@ Read the complete [privacy policy](PRIVACY.md) and
 4. Choose **Load unpacked** and select this repository.
 5. Open a LeetCode problem and inspect LeetBridge from the toolbar.
 
-The production GitHub App registration and release checklist are documented in
-[PUBLISHING.md](PUBLISHING.md). End users do not perform those steps.
-
 ## Project structure
 
 ```text
@@ -98,7 +97,6 @@ content/      LeetCode detection and normalized data extraction
 github/       In-extension GitHub connection screen
 popup/        Toolbar popup
 resources/    Runtime extension icons and artwork
-store-assets/ Chrome Web Store listing artwork and screenshots
 ```
 
 ## Status

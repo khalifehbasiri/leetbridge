@@ -8,6 +8,9 @@ dist/
 *.zip
 *.crx
 
+# Local Chrome Web Store release material
+.local-release/
+
 # Local configuration and secrets
 .env
 .env.*
