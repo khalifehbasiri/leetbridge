@@ -12,6 +12,7 @@
     let activePollToken = 0;
     let polledSubmissionId = null;
     let completedSubmissionId = null;
+    let historyImportController = null;
 
     function normalizeUrl(input) {
         if (typeof input === "string") {
@@ -299,6 +300,205 @@
 
         return originalSend.apply(this, arguments);
     };
+
+    async function fetchLeetCodeJson(path, signal) {
+        const response = await originalFetch(path, {
+            credentials: "same-origin",
+            headers: { Accept: "application/json" },
+            signal
+        });
+
+        if (response.status === 401 || response.status === 403) {
+            throw new Error("Sign in to LeetCode before importing solutions");
+        }
+
+        if (!response.ok) {
+            throw new Error(`LeetCode request failed (${response.status})`);
+        }
+
+        return response.json();
+    }
+
+    function createProblemCatalog(payload) {
+        const difficulties = {
+            1: "Easy",
+            2: "Medium",
+            3: "Hard"
+        };
+        const catalog = new Map();
+
+        for (const item of payload.stat_status_pairs ?? []) {
+            const stat = item.stat ?? {};
+            const slug = stat.question__title_slug;
+            const rawNumber = String(stat.frontend_question_id ?? "");
+
+            if (!slug) {
+                continue;
+            }
+
+            catalog.set(slug, {
+                number: /^\d+$/.test(rawNumber) ? Number(rawNumber) : null,
+                title: stat.question__title ?? slug,
+                slug,
+                difficulty: difficulties[item.difficulty?.level] ?? null
+            });
+        }
+
+        return catalog;
+    }
+
+    async function getHistoricalSubmissionCode(submission, signal) {
+        if (typeof submission.code === "string" && submission.code.length > 0) {
+            return submission.code;
+        }
+
+        const submissionId = submission.id ?? submission.submission_id;
+
+        if (!submissionId) {
+            return null;
+        }
+
+        const details = await fetchLeetCodeJson(
+            `/submissions/detail/${encodeURIComponent(submissionId)}/check/`,
+            signal
+        );
+
+        return typeof details.code === "string" ? details.code : null;
+    }
+
+    async function importSubmissionHistory(request) {
+        historyImportController?.abort();
+        historyImportController = new AbortController();
+        const { signal } = historyImportController;
+        const requestId = request.requestId;
+        const catalogPayload = await fetchLeetCodeJson(
+            "/api/problems/all/",
+            signal
+        );
+        const catalog = createProblemCatalog(catalogPayload);
+        const seenProblemLanguages = new Set();
+        let offset = 0;
+        let lastKey = "";
+        let scannedCount = 0;
+        let candidateCount = 0;
+        let hasNext = true;
+
+        while (hasNext && scannedCount < 10000) {
+            const parameters = new URLSearchParams({
+                offset: String(offset),
+                limit: "20"
+            });
+
+            if (lastKey) {
+                parameters.set("lastkey", lastKey);
+            }
+
+            const payload = await fetchLeetCodeJson(
+                `/api/submissions/?${parameters}`,
+                signal
+            );
+            const submissions = payload.submissions_dump ?? [];
+            const batch = [];
+
+            for (const submission of submissions) {
+                const status = String(
+                    submission.status_display ?? submission.statusDisplay ?? ""
+                );
+
+                if (status.toLowerCase() !== "accepted") {
+                    continue;
+                }
+
+                const slug = submission.title_slug ?? submission.titleSlug;
+                const language = submission.lang ?? submission.language;
+                const identity = `${slug}:${String(language).toLowerCase()}`;
+
+                if (!slug || !language || seenProblemLanguages.has(identity)) {
+                    continue;
+                }
+
+                const code = await getHistoricalSubmissionCode(
+                    submission,
+                    signal
+                );
+
+                if (!code) {
+                    continue;
+                }
+
+                seenProblemLanguages.add(identity);
+
+                const problem = catalog.get(slug) ?? {
+                    number: null,
+                    title: submission.title ?? slug,
+                    slug,
+                    difficulty: null
+                };
+
+                batch.push({
+                    username: catalogPayload.user_name || null,
+                    problem,
+                    submission: {
+                        submissionId: String(
+                            submission.id ?? submission.submission_id ?? ""
+                        ) || null,
+                        language,
+                        code,
+                        status: "Accepted",
+                        accepted: true
+                    }
+                });
+            }
+
+            scannedCount += submissions.length;
+            candidateCount += batch.length;
+            hasNext = payload.has_next === true && submissions.length > 0;
+            lastKey = String(payload.last_key ?? "");
+            offset += submissions.length;
+
+            dispatchBridgeEvent("leetbridge:history-import-batch", {
+                requestId,
+                submissions: batch,
+                scannedCount,
+                candidateCount,
+                hasNext
+            });
+        }
+
+        dispatchBridgeEvent("leetbridge:history-import-complete", {
+            requestId,
+            scannedCount,
+            candidateCount,
+            truncated: hasNext
+        });
+    }
+
+    document.addEventListener("leetbridge:history-import-request", (event) => {
+        try {
+            const request = JSON.parse(event.detail);
+
+            importSubmissionHistory(request).catch((error) => {
+                if (error.name === "AbortError") {
+                    return;
+                }
+
+                dispatchBridgeEvent("leetbridge:history-import-error", {
+                    requestId: request.requestId,
+                    error: error.message
+                });
+            });
+        } catch (error) {
+            dispatchBridgeEvent("leetbridge:history-import-error", {
+                requestId: null,
+                error: error.message
+            });
+        }
+    });
+
+    document.addEventListener("leetbridge:history-import-cancel", () => {
+        historyImportController?.abort();
+        historyImportController = null;
+    });
 
     document.addEventListener("leetbridge:username-request", () => {
         if (latestUsername) {

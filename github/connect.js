@@ -153,11 +153,22 @@ async function saveRepository() {
     }
 
     const [installationId, repositoryId] = repositorySelect.value.split(":");
-    const response = await chrome.runtime.sendMessage({
-        type: "GITHUB_SELECT_REPOSITORY",
-        installationId,
-        repositoryId
-    });
+    const button = document.getElementById("save-repository-button");
+    button.disabled = true;
+    button.textContent = "Initializing repository...";
+    showMessage("Verifying access and preparing the repository README...");
+    let response;
+
+    try {
+        response = await chrome.runtime.sendMessage({
+            type: "GITHUB_SELECT_REPOSITORY",
+            installationId,
+            repositoryId
+        });
+    } finally {
+        button.disabled = false;
+        button.textContent = "Use repository";
+    }
 
     if (!response?.ok) {
         throw new Error(response?.error ?? "Could not select the repository");

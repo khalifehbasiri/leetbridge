@@ -13,6 +13,11 @@ repository selected by the user.
 - Detects the current LeetCode problem, difficulty, user, and submission state.
 - Captures the language and exact source code only when the user submits it.
 - Syncs accepted solutions directly from Chrome to GitHub.
+- Prevents duplicate syncs using LeetCode submission IDs.
+- Maintains problem READMEs and a repository-wide solution index.
+- Imports the latest accepted historical solution for each problem and language.
+- Rebuilds the root README from solution folders when recovery is needed.
+- Includes Auto Sync and README update controls in the popup.
 - Limits GitHub access through a fine-grained GitHub App installation.
 - Requires no personal access token, local Git installation, or code setup from
   extension users.
@@ -55,6 +60,10 @@ LeetBridge refreshes the generated section.
 4. Select the repository in LeetBridge.
 5. Submit a solution on LeetCode. Accepted solutions sync automatically.
 
+The popup also lets users import previous accepted solutions, pause automatic
+syncing, disable generated README updates, and rebuild the repository index
+from the solution folders.
+
 Users never edit extension files or paste authentication tokens.
 
 ## Security and privacy
@@ -84,17 +93,20 @@ The production GitHub App registration and release checklist are documented in
 ## Project structure
 
 ```text
-background/   GitHub authentication, API access, and trusted storage
+background/   GitHub access, settings, importing, and trusted storage
 content/      LeetCode detection and normalized data extraction
 github/       In-extension GitHub connection screen
 popup/        Toolbar popup
-resources/    Extension artwork
+resources/    Runtime extension icons and artwork
+store-assets/ Chrome Web Store listing artwork and screenshots
 ```
 
 ## Status
 
-LeetBridge is under active development. The LeetCode interface can change, so
-selectors and submission detection are verified before each store release.
+Version 1.0 includes live accepted-submission syncing, repository indexing,
+historical import, recovery tools, and guided onboarding. The LeetCode
+interface can change, so selectors and submission detection are reviewed
+before each store release.
 
 ## License
 

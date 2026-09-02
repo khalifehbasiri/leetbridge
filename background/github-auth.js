@@ -2,6 +2,7 @@ const GITHUB_AUTH_KEY = "githubAuth";
 const GITHUB_DEVICE_FLOW_KEY = "githubDeviceFlow";
 const GITHUB_REPOSITORY_KEY = "githubRepository";
 const GITHUB_LAST_SYNC_KEY = "githubLastSync";
+const GITHUB_PROFILE_KEY = "githubProfile";
 
 async function postGitHubOAuthForm(parameters) {
     const response = await fetch(
@@ -194,7 +195,11 @@ async function disconnectGitHub() {
     await chrome.storage.local.remove([
         GITHUB_AUTH_KEY,
         GITHUB_REPOSITORY_KEY,
-        GITHUB_LAST_SYNC_KEY
+        GITHUB_LAST_SYNC_KEY,
+        GITHUB_PROFILE_KEY,
+        GITHUB_REPOSITORY_STATE_KEY,
+        LEETBRIDGE_IMPORT_STATE_KEY,
+        LEETBRIDGE_SYNCED_SUBMISSIONS_KEY
     ]);
     await chrome.storage.session.remove(GITHUB_DEVICE_FLOW_KEY);
 }

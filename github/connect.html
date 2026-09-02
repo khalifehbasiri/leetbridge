@@ -8,7 +8,13 @@
 </head>
 <body>
     <main>
-        <h1>Connect LeetBridge to GitHub</h1>
+        <div class="brand-heading">
+            <img src="../resources/icon48.png" alt="" width="44" height="44">
+            <div>
+                <p class="brand-label">LEETBRIDGE SETUP</p>
+                <h1>Connect LeetBridge to GitHub</h1>
+            </div>
+        </div>
         <p class="intro">
             Sign in to GitHub and choose where LeetBridge should save your
             accepted solutions. Submitted code is sent directly to that
@@ -70,9 +76,12 @@
         </section>
 
         <section id="connected-panel" hidden>
-            <h2>Connected</h2>
+            <h2>Connected and ready</h2>
             <p>Accepted solutions will sync to:</p>
             <p id="connected-repository" class="repository-name"></p>
+            <p class="success-note">
+                Repository access is verified and the LeetBridge README is initialized.
+            </p>
             <p class="muted">
                 Disconnecting removes GitHub credentials stored by this
                 browser. You can separately revoke repository access in GitHub.

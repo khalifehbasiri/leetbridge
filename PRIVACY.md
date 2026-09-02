@@ -14,6 +14,11 @@ While a user is on a LeetCode problem page, LeetBridge may process:
 - submission status and programming language; and
 - the source code submitted by the user.
 
+If the user starts a historical import, LeetBridge also reads the user's
+authenticated LeetCode submission history to find the latest accepted
+solution for each problem and language. Earlier duplicate submissions are not
+sent to GitHub.
+
 When a user connects GitHub, LeetBridge also processes:
 
 - the repositories made available to the LeetBridge GitHub App;
@@ -32,11 +37,12 @@ server that receives or stores this data.
 
 ## Local storage and retention
 
-Current problem data, the selected repository, the last sync result, and
-GitHub authorization tokens are stored in Chrome's extension storage on the
-user's device. Extension storage is restricted to trusted extension pages and
-the background service worker. The extension does not keep a separate local
-archive of every accepted solution.
+Current problem data, settings, import progress, recently synced submission
+IDs, the selected repository, the last sync result, and GitHub authorization
+tokens are stored in Chrome's extension storage on the user's device.
+Extension storage is restricted to trusted extension pages and the background
+service worker. The extension does not keep a separate local archive of every
+accepted solution.
 
 Disconnecting GitHub removes the locally stored GitHub tokens, repository
 selection, and last sync result. Removing the extension clears its remaining
@@ -51,6 +57,12 @@ files. LeetBridge does not sell user data or share it with advertisers, data
 brokers, or analytics providers.
 
 GitHub and LeetCode process data under their own terms and privacy policies.
+
+When a LeetCode username is available during repository initialization,
+LeetBridge may add public image links from `leetcard.jacoblin.cool` to the
+generated GitHub README for a profile stats card and activity heatmap. These
+links contain the LeetCode username and are loaded by GitHub when the README is
+viewed. Users can remove those links by editing their repository README.
 
 ## User choices
 

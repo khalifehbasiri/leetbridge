@@ -50,6 +50,34 @@ function buildProblemReadme(problem, solutions) {
     ].join("\n");
 }
 
+function titleFromProblemSlug(slug) {
+    return String(slug ?? "")
+        .split("-")
+        .filter(Boolean)
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" ");
+}
+
+function parseProblemReadmeMetadata(readme, fallback) {
+    const headingMatch = readme.match(/^#\s+(?:(\d+)\.\s+)?(.+)$/m);
+    const difficultyMatch = readme.match(/^\*\*Difficulty:\*\*\s+(.+)$/m);
+
+    return {
+        number: headingMatch?.[1]
+            ? Number(headingMatch[1])
+            : fallback.number,
+        slug: fallback.slug,
+        title: normalizeInlineText(
+            headingMatch?.[2],
+            titleFromProblemSlug(fallback.slug)
+        ),
+        difficulty: normalizeInlineText(
+            difficultyMatch?.[1],
+            "Unknown"
+        )
+    };
+}
+
 function splitMarkdownTableRow(line) {
     const placeholder = "\u0000";
 
@@ -194,7 +222,35 @@ function buildRootReadmeSection(entries) {
     ].join("\n");
 }
 
-function updateRootReadme(existingReadme, generatedSection) {
+function buildRepositoryReadmeIntroduction(leetcodeUsername) {
+    const lines = [
+        "# LeetCode Solutions",
+        "",
+        "A collection of accepted LeetCode solutions automatically synced by LeetBridge."
+    ];
+
+    if (leetcodeUsername) {
+        const username = encodeURIComponent(leetcodeUsername);
+        const profileUrl = `https://leetcode.com/u/${username}/`;
+
+        lines.push(
+            "",
+            "## LeetCode Profile",
+            "",
+            `[![LeetCode Stats](https://leetcard.jacoblin.cool/${username}?theme=light&font=Inter)](${profileUrl})`,
+            "",
+            `[![LeetCode Activity](https://leetcard.jacoblin.cool/${username}?ext=heatmap&theme=light)](${profileUrl})`
+        );
+    }
+
+    return lines.join("\n");
+}
+
+function updateRootReadme(
+    existingReadme,
+    generatedSection,
+    leetcodeUsername = null
+) {
     const startIndex = existingReadme.indexOf(SOLUTIONS_START_MARKER);
     const endIndex = existingReadme.indexOf(SOLUTIONS_END_MARKER);
     const hasDuplicateStart = startIndex !== -1
@@ -228,11 +284,8 @@ function updateRootReadme(existingReadme, generatedSection) {
     }
 
     const existing = existingReadme.trimEnd();
-    const introduction = existing || [
-        "# LeetCode Solutions",
-        "",
-        "Accepted solutions automatically synced by LeetBridge."
-    ].join("\n");
+    const introduction = existing
+        || buildRepositoryReadmeIntroduction(leetcodeUsername);
 
     return `${introduction}\n\n${generatedSection}\n`;
 }

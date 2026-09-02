@@ -1,6 +1,7 @@
 let latestSubmissionStatus = null;
 let latestSubmissionAccepted = false;
 let latestStatusSlug = null;
+let latestSubmissionId = null;
 
 function refreshSubmissionData() {
     if (typeof scheduleScan === "function") {
@@ -19,6 +20,7 @@ document.addEventListener("leetbridge:submission-captured", (event) => {
         latestSubmissionStatus = "Pending";
         latestSubmissionAccepted = false;
         latestStatusSlug = submission.problemSlug ?? null;
+        latestSubmissionId = null;
         refreshSubmissionData();
     } catch (error) {
         console.warn("LeetBridge could not initialize submission status:", error);
@@ -32,6 +34,9 @@ document.addEventListener("leetbridge:submission-result", (event) => {
         latestSubmissionStatus = submission.status ?? null;
         latestSubmissionAccepted = submission.accepted === true;
         latestStatusSlug = submission.problemSlug ?? null;
+        latestSubmissionId = submission.submissionId != null
+            ? String(submission.submissionId)
+            : null;
         refreshSubmissionData();
     } catch (error) {
         console.warn("LeetBridge could not read submission status:", error);
@@ -51,4 +56,8 @@ function getSubmissionStatus() {
 
 function isSubmissionAccepted() {
     return isCurrentStatusSlug() && latestSubmissionAccepted;
+}
+
+function getSubmissionId() {
+    return isCurrentStatusSlug() ? latestSubmissionId : null;
 }

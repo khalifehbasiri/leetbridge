@@ -20,6 +20,7 @@ function collectProblemData() {
             difficulty: getDifficulty()
         },
         submission: {
+            submissionId: getSubmissionId(),
             language: getSubmissionLanguage(),
             code: getProblemCode(),
             status: getSubmissionStatus(),
@@ -92,13 +93,57 @@ observer.observe(document.body, {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type !== "LEETBRIDGE_GET_DATA") {
+    if (message?.type === "LEETBRIDGE_GET_DATA") {
+        sendResponse({
+            ok: true,
+            data: getProblemSlug() ? collectProblemData() : null
+        });
         return false;
     }
 
-    sendResponse({
-        ok: true,
-        data: getProblemSlug() ? collectProblemData() : null
-    });
+    if (message?.type === "LEETBRIDGE_IMPORT_HISTORY") {
+        document.dispatchEvent(new CustomEvent(
+            "leetbridge:history-import-request",
+            { detail: JSON.stringify({ requestId: message.requestId }) }
+        ));
+        sendResponse({ ok: true });
+        return false;
+    }
+
+    if (message?.type === "LEETBRIDGE_CANCEL_IMPORT") {
+        document.dispatchEvent(new CustomEvent(
+            "leetbridge:history-import-cancel"
+        ));
+        sendResponse({ ok: true });
+        return false;
+    }
+
     return false;
+});
+
+let historyImportMessageQueue = Promise.resolve();
+
+function queueHistoryImportMessage(type, detail) {
+    historyImportMessageQueue = historyImportMessageQueue.then(async () => {
+        const payload = JSON.parse(detail);
+        const response = await chrome.runtime.sendMessage({ type, ...payload });
+
+        if (!response?.ok) {
+            throw new Error(response?.error ?? "Historical import failed");
+        }
+    }).catch((error) => {
+        console.warn("LeetBridge historical import error:", error);
+    });
+}
+
+document.addEventListener("leetbridge:history-import-batch", (event) => {
+    queueHistoryImportMessage("LEETBRIDGE_IMPORT_BATCH", event.detail);
+});
+
+document.addEventListener("leetbridge:history-import-complete", (event) => {
+    queueHistoryImportMessage("LEETBRIDGE_IMPORT_COMPLETE", event.detail);
+});
+
+document.addEventListener("leetbridge:history-import-error", (event) => {
+    queueHistoryImportMessage("LEETBRIDGE_IMPORT_ERROR", event.detail);
 });

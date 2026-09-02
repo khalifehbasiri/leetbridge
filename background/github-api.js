@@ -69,44 +69,116 @@ async function selectGitHubRepository(repositoryId, installationId) {
         throw new Error("The selected repository is not available to LeetBridge");
     }
 
-    await chrome.storage.local.set({
-        [GITHUB_REPOSITORY_KEY]: selected
-    });
-
     const current = await chrome.storage.local.get("leetBridgeCurrent");
     const currentData = current.leetBridgeCurrent;
+    const initialization = await queueGitHubOperation(() => (
+        initializeGitHubRepository(
+            selected,
+            currentData?.username ?? null
+        )
+    ));
+
+    await chrome.storage.local.set({
+        [GITHUB_REPOSITORY_KEY]: selected,
+        [GITHUB_REPOSITORY_STATE_KEY]: {
+            repository: selected.fullName,
+            initialized: true,
+            initializedAt: new Date().toISOString(),
+            readmePath: ROOT_README_PATH
+        }
+    });
 
     if (
         currentData?.submission?.accepted === true
         && typeof currentData.submission.code === "string"
     ) {
         try {
-            await syncAcceptedSolutionToGitHub(currentData);
+            const settings = await getLeetBridgeSettings();
+
+            if (settings.autoSync) {
+                await syncAcceptedSolutionToGitHub(currentData, {
+                    updateProblemReadme: settings.updateReadme,
+                    updateRootReadme: settings.updateReadme
+                });
+            }
         } catch (error) {
             await recordGitHubSyncFailure(error);
         }
     }
 
-    return selected;
+    return { ...selected, initialization };
 }
 
 async function getGitHubConnectionStatus() {
     const stored = await chrome.storage.local.get([
         GITHUB_AUTH_KEY,
         GITHUB_REPOSITORY_KEY,
-        GITHUB_LAST_SYNC_KEY
+        GITHUB_LAST_SYNC_KEY,
+        GITHUB_PROFILE_KEY,
+        GITHUB_REPOSITORY_STATE_KEY
     ]);
-
+    const authenticated = Boolean(stored[GITHUB_AUTH_KEY]?.accessToken);
     const lastSync = stored[GITHUB_LAST_SYNC_KEY];
+    const [settings, importState] = await Promise.all([
+        getLeetBridgeSettings(),
+        getLeetBridgeImportState()
+    ]);
+    let githubUsername = stored[GITHUB_PROFILE_KEY]?.login ?? null;
+    let repositoryState = stored[GITHUB_REPOSITORY_STATE_KEY] ?? null;
+    let initializationError = null;
+
+    if (authenticated && !githubUsername) {
+        try {
+            const viewer = await githubApiRequest("/user");
+            githubUsername = viewer.login ?? null;
+            await chrome.storage.local.set({
+                [GITHUB_PROFILE_KEY]: {
+                    login: githubUsername
+                }
+            });
+        } catch {
+            githubUsername = null;
+        }
+    }
+
+    if (authenticated && stored[GITHUB_REPOSITORY_KEY] && !repositoryState) {
+        try {
+            const current = await chrome.storage.local.get("leetBridgeCurrent");
+
+            await queueGitHubOperation(() => initializeGitHubRepository(
+                stored[GITHUB_REPOSITORY_KEY],
+                current.leetBridgeCurrent?.username ?? null
+            ));
+            repositoryState = {
+                repository: stored[GITHUB_REPOSITORY_KEY].fullName,
+                initialized: true,
+                initializedAt: new Date().toISOString(),
+                readmePath: ROOT_README_PATH
+            };
+            await chrome.storage.local.set({
+                [GITHUB_REPOSITORY_STATE_KEY]: repositoryState
+            });
+        } catch (error) {
+            initializationError = error.message;
+        }
+    }
 
     return {
         configured: isGitHubConfigured(),
-        authenticated: Boolean(stored[GITHUB_AUTH_KEY]?.accessToken),
+        authenticated,
+        githubUsername,
         repository: stored[GITHUB_REPOSITORY_KEY] ?? null,
+        repositoryState,
+        initializationError,
+        settings,
+        importState,
         lastSync: lastSync ? {
             ok: lastSync.ok,
             repository: lastSync.repository ?? null,
             path: lastSync.path ?? null,
+            problemNumber: lastSync.problemNumber ?? null,
+            problemTitle: lastSync.problemTitle ?? null,
+            submissionId: lastSync.submissionId ?? null,
             commitUrl: lastSync.commitUrl ?? null,
             error: lastSync.error ?? null,
             syncedAt: lastSync.syncedAt
@@ -350,60 +422,227 @@ async function getProblemSolutions(repository, folder, currentLanguage) {
         ));
 }
 
-async function updateRepositoryReadmes(repository, data, folder, solutions) {
-    const problemReadmePath = `${folder}/README.md`;
-    const problemReadme = buildProblemReadme(data.problem, solutions);
-    const problemResult = await upsertGitHubFile(
-        repository,
-        problemReadmePath,
-        problemReadme,
-        `Update README for ${normalizeInlineText(
-            data.problem.title,
-            data.problem.slug
-        )}`
-    );
-    const existingRootFile = await getGitHubContent(
+async function getGitHubTextFile(repository, path) {
+    const file = await getGitHubContent(repository, path);
+
+    if (file === null) {
+        return null;
+    }
+
+    if (Array.isArray(file)) {
+        throw new Error(`${path} is a directory, not a file`);
+    }
+
+    if (typeof file.content !== "string") {
+        throw new Error(`${path} is too large for LeetBridge to read safely`);
+    }
+
+    return decodeUtf8Base64(file.content);
+}
+
+async function initializeGitHubRepository(repository, leetcodeUsername) {
+    const existingReadme = await getGitHubTextFile(
         repository,
         ROOT_README_PATH
+    ) ?? "";
+    const existingEntries = parseRootReadmeEntries(existingReadme);
+    const nextReadme = updateRootReadme(
+        existingReadme,
+        buildRootReadmeSection(existingEntries),
+        leetcodeUsername
     );
-
-    if (Array.isArray(existingRootFile)) {
-        throw new Error("README.md is a directory, not a file");
-    }
-
-    if (existingRootFile && typeof existingRootFile.content !== "string") {
-        throw new Error(
-            "README.md is too large for LeetBridge to update safely"
-        );
-    }
-
-    const existingRootReadme = existingRootFile
-        ? decodeUtf8Base64(existingRootFile.content)
-        : "";
-    const entries = mergeProblemEntry(
-        parseRootReadmeEntries(existingRootReadme),
-        data.problem,
-        solutions
-    );
-    const nextRootReadme = updateRootReadme(
-        existingRootReadme,
-        buildRootReadmeSection(entries)
-    );
-    const rootResult = await upsertGitHubFile(
+    const result = await upsertGitHubFile(
         repository,
         ROOT_README_PATH,
-        nextRootReadme,
-        "Update LeetCode solutions index"
+        nextReadme,
+        "Initialize LeetBridge repository"
     );
 
     return {
-        problemReadmePath,
-        problemResult,
-        rootResult
+        initialized: true,
+        changed: result.changed,
+        commitUrl: result.commitUrl
     };
 }
 
-async function performAcceptedSolutionSync(data) {
+async function updateRepositoryReadmes(
+    repository,
+    data,
+    folder,
+    solutions,
+    options
+) {
+    const result = {
+        problemReadmePath: `${folder}/README.md`,
+        problemResult: null,
+        rootResult: null
+    };
+
+    if (options.updateProblemReadme) {
+        const problemReadme = buildProblemReadme(data.problem, solutions);
+
+        result.problemResult = await upsertGitHubFile(
+            repository,
+            result.problemReadmePath,
+            problemReadme,
+            `Update README for ${normalizeInlineText(
+                data.problem.title,
+                data.problem.slug
+            )}`
+        );
+    }
+
+    if (options.updateRootReadme) {
+        const existingRootReadme = await getGitHubTextFile(
+            repository,
+            ROOT_README_PATH
+        ) ?? "";
+        const entries = mergeProblemEntry(
+            parseRootReadmeEntries(existingRootReadme),
+            data.problem,
+            solutions
+        );
+        const nextRootReadme = updateRootReadme(
+            existingRootReadme,
+            buildRootReadmeSection(entries),
+            data.username
+        );
+
+        result.rootResult = await upsertGitHubFile(
+            repository,
+            ROOT_README_PATH,
+            nextRootReadme,
+            "Update LeetCode solutions index"
+        );
+    }
+
+    return result;
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+    const results = new Array(items.length);
+    let nextIndex = 0;
+
+    async function worker() {
+        while (nextIndex < items.length) {
+            const index = nextIndex;
+            nextIndex += 1;
+            results[index] = await mapper(items[index], index);
+        }
+    }
+
+    await Promise.all(
+        Array.from(
+            { length: Math.min(limit, items.length) },
+            () => worker()
+        )
+    );
+
+    return results;
+}
+
+async function readProblemDirectoryEntry(repository, directory) {
+    const folderMatch = directory.name.match(
+        /^(\d{4,})-([a-z0-9]+(?:-[a-z0-9]+)*)$/
+    );
+
+    if (!folderMatch) {
+        return null;
+    }
+
+    const fallback = {
+        number: Number(folderMatch[1]),
+        slug: folderMatch[2]
+    };
+    const [solutions, problemReadme] = await Promise.all([
+        getProblemSolutions(repository, directory.name, null),
+        getGitHubTextFile(repository, `${directory.name}/README.md`)
+    ]);
+
+    if (solutions.length === 0) {
+        return null;
+    }
+
+    return {
+        ...parseProblemReadmeMetadata(problemReadme ?? "", fallback),
+        solutions
+    };
+}
+
+async function rebuildRepositoryReadme(repository, leetcodeUsername = null) {
+    const rootItems = await listGitHubDirectory(repository, "");
+    const directories = rootItems.filter((item) => (
+        item.type === "dir"
+        && /^\d{4,}-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(item.name)
+    ));
+    const entries = (await mapWithConcurrency(
+        directories,
+        5,
+        (directory) => readProblemDirectoryEntry(repository, directory)
+    )).filter(Boolean).sort((first, second) => (
+        first.number - second.number
+    ));
+    const existingReadme = await getGitHubTextFile(
+        repository,
+        ROOT_README_PATH
+    ) ?? "";
+    const nextReadme = updateRootReadme(
+        existingReadme,
+        buildRootReadmeSection(entries),
+        leetcodeUsername
+    );
+    const result = await upsertGitHubFile(
+        repository,
+        ROOT_README_PATH,
+        nextReadme,
+        "Rebuild LeetCode solutions index"
+    );
+
+    return {
+        changed: result.changed,
+        commitUrl: result.commitUrl,
+        problemCount: entries.length
+    };
+}
+
+async function hasSyncedSubmission(repository, submissionId) {
+    if (!submissionId) {
+        return false;
+    }
+
+    const stored = await chrome.storage.local.get(
+        LEETBRIDGE_SYNCED_SUBMISSIONS_KEY
+    );
+    const repositoryIds = stored[LEETBRIDGE_SYNCED_SUBMISSIONS_KEY]
+        ?.[repository.fullName] ?? [];
+
+    return repositoryIds.includes(String(submissionId));
+}
+
+async function rememberSyncedSubmission(repository, submissionId) {
+    if (!submissionId) {
+        return;
+    }
+
+    const stored = await chrome.storage.local.get(
+        LEETBRIDGE_SYNCED_SUBMISSIONS_KEY
+    );
+    const allRepositories = stored[LEETBRIDGE_SYNCED_SUBMISSIONS_KEY] ?? {};
+    const repositoryIds = allRepositories[repository.fullName] ?? [];
+    const nextIds = [
+        ...repositoryIds.filter((id) => id !== String(submissionId)),
+        String(submissionId)
+    ].slice(-2000);
+
+    await chrome.storage.local.set({
+        [LEETBRIDGE_SYNCED_SUBMISSIONS_KEY]: {
+            ...allRepositories,
+            [repository.fullName]: nextIds
+        }
+    });
+}
+
+async function performAcceptedSolutionSync(data, options) {
     const stored = await chrome.storage.local.get([
         GITHUB_REPOSITORY_KEY,
         GITHUB_LAST_SYNC_KEY
@@ -412,6 +651,18 @@ async function performAcceptedSolutionSync(data) {
 
     if (!repository) {
         return { skipped: true, reason: "No GitHub repository selected" };
+    }
+
+    const submissionId = data.submission.submissionId
+        ? String(data.submission.submissionId)
+        : null;
+
+    if (await hasSyncedSubmission(repository, submissionId)) {
+        return {
+            skipped: true,
+            reason: "Submission is already synced",
+            submissionId
+        };
     }
 
     const extension = getSolutionFileExtension(data.submission.language);
@@ -424,7 +675,8 @@ async function performAcceptedSolutionSync(data) {
     );
 
     if (
-        stored[GITHUB_LAST_SYNC_KEY]?.ok === true
+        !submissionId
+        && stored[GITHUB_LAST_SYNC_KEY]?.ok === true
         && stored[GITHUB_LAST_SYNC_KEY]?.formatVersion
             === REPOSITORY_FORMAT_VERSION
         && stored[GITHUB_LAST_SYNC_KEY]?.fingerprint === fingerprint
@@ -438,52 +690,79 @@ async function performAcceptedSolutionSync(data) {
         data.submission.code,
         getCommitSubject(data.problem)
     );
-    const solutions = await getProblemSolutions(
-        repository,
-        folder,
-        data.submission.language
-    );
-    const readmeResults = await updateRepositoryReadmes(
-        repository,
-        data,
-        folder,
-        solutions
-    );
-    const commitUrl = readmeResults.rootResult.commitUrl
-        ?? readmeResults.problemResult.commitUrl
+    let readmeResults = {
+        problemReadmePath: `${folder}/README.md`,
+        problemResult: null,
+        rootResult: null
+    };
+
+    if (options.updateProblemReadme || options.updateRootReadme) {
+        const solutions = await getProblemSolutions(
+            repository,
+            folder,
+            data.submission.language
+        );
+
+        readmeResults = await updateRepositoryReadmes(
+            repository,
+            data,
+            folder,
+            solutions,
+            options
+        );
+    }
+
+    const commitUrl = readmeResults.rootResult?.commitUrl
+        ?? readmeResults.problemResult?.commitUrl
         ?? solutionResult.commitUrl;
     const syncResult = {
         ok: true,
         repository: repository.fullName,
         path: filePath,
+        problemNumber: data.problem.number ?? null,
+        problemTitle: data.problem.title ?? data.problem.slug,
+        submissionId,
         commitUrl,
         fingerprint,
         formatVersion: REPOSITORY_FORMAT_VERSION,
-        updatedPaths: [
-            filePath,
-            readmeResults.problemReadmePath,
-            ROOT_README_PATH
-        ],
+        updatedPaths: [filePath],
         syncedAt: new Date().toISOString()
     };
+
+    if (options.updateProblemReadme) {
+        syncResult.updatedPaths.push(readmeResults.problemReadmePath);
+    }
+
+    if (options.updateRootReadme) {
+        syncResult.updatedPaths.push(ROOT_README_PATH);
+    }
 
     await chrome.storage.local.set({
         [GITHUB_LAST_SYNC_KEY]: syncResult
     });
+    await rememberSyncedSubmission(repository, submissionId);
 
     return syncResult;
 }
 
-let githubSyncQueue = Promise.resolve();
+let githubOperationQueue = Promise.resolve();
 
-function syncAcceptedSolutionToGitHub(data) {
-    const sync = githubSyncQueue.then(() => (
-        performAcceptedSolutionSync(data)
+function queueGitHubOperation(operation) {
+    const result = githubOperationQueue.then(operation);
+
+    githubOperationQueue = result.catch(() => {});
+
+    return result;
+}
+
+function syncAcceptedSolutionToGitHub(data, requestedOptions = {}) {
+    const options = {
+        updateProblemReadme: requestedOptions.updateProblemReadme !== false,
+        updateRootReadme: requestedOptions.updateRootReadme !== false
+    };
+    return queueGitHubOperation(() => (
+        performAcceptedSolutionSync(data, options)
     ));
-
-    githubSyncQueue = sync.catch(() => {});
-
-    return sync;
 }
 
 async function recordGitHubSyncFailure(error) {

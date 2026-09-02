@@ -2,46 +2,123 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LeetBridge</title>
     <link rel="stylesheet" href="popup.css">
 </head>
-
 <body>
-
-    <h1>LeetBridge</h1>
-
-    <p id="status">
-         Checking...
-    </p>
-
-    <dl id="details" hidden>
+    <header class="app-header">
+        <img src="../resources/icon48.png" alt="" width="40" height="40">
         <div>
-            <dt>Current Problem</dt>
-            <dd id="problem">Not detected</dd>
+            <h1>LeetBridge</h1>
+            <p>Accepted solutions, safely synced.</p>
         </div>
-        <div>
-            <dt>LeetCode User</dt>
-            <dd id="username">Not detected</dd>
-        </div>
-        <div>
-            <dt>Submission</dt>
-            <dd id="submission">No submission yet</dd>
-        </div>
-        <div>
-            <dt>Solution</dt>
-            <dd id="solution">Waiting for submission</dd>
-        </div>
-    </dl>
+    </header>
 
-    <section id="github-panel">
-        <h2>GitHub</h2>
-        <p id="github-status">Checking connection...</p>
-        <p id="github-repository" hidden></p>
-        <p id="github-sync" hidden></p>
-        <button id="github-button" type="button">Connect GitHub</button>
-    </section>
+    <main>
+        <section id="onboarding-panel" class="panel onboarding" hidden>
+            <p class="eyebrow">GET STARTED</p>
+            <h2>Finish setting up LeetBridge</h2>
+            <ol class="setup-list">
+                <li id="leetcode-step">Open LeetCode and sign in</li>
+                <li id="github-step">Connect your GitHub account</li>
+                <li id="repository-step">Choose a solutions repository</li>
+            </ol>
+            <button id="onboarding-button" class="primary wide" type="button">
+                Continue setup
+            </button>
+        </section>
+
+        <section class="panel accounts-panel" aria-labelledby="accounts-heading">
+            <h2 id="accounts-heading" class="sr-only">Connections</h2>
+            <div class="account-row">
+                <span id="leetcode-indicator" class="indicator"></span>
+                <div class="account-copy">
+                    <span class="account-label">LeetCode</span>
+                    <strong id="leetcode-account">Not detected</strong>
+                    <span id="current-problem" class="account-detail">Open a problem to begin</span>
+                </div>
+                <button id="leetcode-button" class="text-button" type="button">Open</button>
+            </div>
+            <div class="account-row">
+                <span id="github-indicator" class="indicator"></span>
+                <div class="account-copy">
+                    <span class="account-label">GitHub</span>
+                    <strong id="github-account">Not connected</strong>
+                    <span id="github-repository" class="account-detail">No repository selected</span>
+                </div>
+                <button id="github-button" class="text-button" type="button">Connect</button>
+            </div>
+        </section>
+
+        <section class="panel" aria-labelledby="settings-heading">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">AUTOMATION</p>
+                    <h2 id="settings-heading">Sync settings</h2>
+                </div>
+            </div>
+            <label class="setting-row">
+                <span>
+                    <strong>Auto Sync</strong>
+                    <small>Save new accepted submissions</small>
+                </span>
+                <span class="switch">
+                    <input id="auto-sync-toggle" type="checkbox">
+                    <span class="slider"></span>
+                </span>
+            </label>
+            <label class="setting-row">
+                <span>
+                    <strong>Update READMEs</strong>
+                    <small>Maintain problem pages and the index</small>
+                </span>
+                <span class="switch">
+                    <input id="readme-toggle" type="checkbox">
+                    <span class="slider"></span>
+                </span>
+            </label>
+        </section>
+
+        <section class="panel" aria-labelledby="activity-heading">
+            <p class="eyebrow">ACTIVITY</p>
+            <h2 id="activity-heading">Last sync</h2>
+            <div id="last-sync" class="sync-card">
+                <span class="sync-icon">○</span>
+                <div>
+                    <strong>No solutions synced yet</strong>
+                    <span>Your next accepted solution will appear here.</span>
+                </div>
+            </div>
+        </section>
+
+        <section id="import-panel" class="panel import-panel" hidden aria-live="polite">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">HISTORICAL IMPORT</p>
+                    <h2 id="import-title">Scanning submissions</h2>
+                </div>
+                <span id="import-spinner" class="spinner"></span>
+            </div>
+            <p id="import-summary" class="muted">Preparing import...</p>
+            <div class="progress-track"><span></span></div>
+            <button id="cancel-import-button" class="secondary wide" type="button">
+                Cancel import
+            </button>
+        </section>
+
+        <section class="actions" aria-label="Repository tools">
+            <button id="import-button" class="primary" type="button">
+                Import previous solutions
+            </button>
+            <button id="rebuild-button" class="secondary" type="button">
+                Rebuild README
+            </button>
+        </section>
+
+        <p id="message" class="message" aria-live="polite" hidden></p>
+    </main>
 
     <script src="popup.js"></script>
-
 </body>
 </html>

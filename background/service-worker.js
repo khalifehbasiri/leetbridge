@@ -1,8 +1,10 @@
 importScripts(
     "github-config.js",
+    "settings.js",
     "github-auth.js",
     "github-readme.js",
-    "github-api.js"
+    "github-api.js",
+    "importer.js"
 );
 
 const CURRENT_DATA_KEY = "leetBridgeCurrent";
@@ -63,7 +65,7 @@ function isOptionalString(value, maxLength) {
         || (typeof value === "string" && value.length <= maxLength);
 }
 
-function isValidProblemData(data, sender) {
+function isValidProblemData(data, sender, requireCurrentProblem = true) {
     const code = data?.submission?.code;
     const codeSize = typeof code === "string"
         ? new TextEncoder().encode(code).byteLength
@@ -73,7 +75,10 @@ function isValidProblemData(data, sender) {
         data
         && typeof data === "object"
         && data.problem
-        && data.problem.slug === getSenderProblemSlug(sender)
+        && (
+            !requireCurrentProblem
+            || data.problem.slug === getSenderProblemSlug(sender)
+        )
         && SLUG_PATTERN.test(data.problem.slug)
         && (
             data.problem.number == null
@@ -87,6 +92,7 @@ function isValidProblemData(data, sender) {
         && isOptionalString(data.username, 100)
         && data.submission
         && typeof data.submission === "object"
+        && isOptionalString(data.submission.submissionId, 100)
         && isOptionalString(data.submission.language, 50)
         && isOptionalString(data.submission.status, 100)
         && typeof data.submission.accepted === "boolean"
@@ -119,8 +125,17 @@ async function storeProblemData(data) {
         return;
     }
 
+    const settings = await getLeetBridgeSettings();
+
+    if (!settings.autoSync) {
+        return;
+    }
+
     try {
-        await syncAcceptedSolutionToGitHub(data);
+        await syncAcceptedSolutionToGitHub(data, {
+            updateProblemReadme: settings.updateReadme,
+            updateRootReadme: settings.updateReadme
+        });
     } catch (error) {
         await recordGitHubSyncFailure(error);
         console.warn("LeetBridge could not sync to GitHub:", error);
@@ -257,6 +272,112 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 message.repositoryId,
                 message.installationId
             ).then((repository) => ({ repository })),
+            sendResponse
+        );
+    }
+
+    if (message?.type === "LEETBRIDGE_UPDATE_SETTINGS") {
+        if (!isExtensionPageSender(sender)) {
+            sendResponse({ ok: false, error: "Invalid sender" });
+            return false;
+        }
+
+        return sendTrustedResponse(
+            () => updateLeetBridgeSettings(message.settings)
+                .then((settings) => ({ settings })),
+            sendResponse
+        );
+    }
+
+    if (message?.type === "GITHUB_REBUILD_README") {
+        if (!isExtensionPageSender(sender)) {
+            sendResponse({ ok: false, error: "Invalid sender" });
+            return false;
+        }
+
+        return sendTrustedResponse(async () => {
+            const stored = await chrome.storage.local.get([
+                GITHUB_REPOSITORY_KEY,
+                CURRENT_DATA_KEY
+            ]);
+            const repository = stored[GITHUB_REPOSITORY_KEY];
+
+            if (!repository) {
+                throw new Error("Connect a GitHub repository first");
+            }
+
+            const result = await queueGitHubOperation(() => (
+                rebuildRepositoryReadme(
+                    repository,
+                    stored[CURRENT_DATA_KEY]?.username ?? null
+                )
+            ));
+
+            return { result };
+        }, sendResponse);
+    }
+
+    if (message?.type === "LEETBRIDGE_START_IMPORT") {
+        if (!isExtensionPageSender(sender)) {
+            sendResponse({ ok: false, error: "Invalid sender" });
+            return false;
+        }
+
+        return sendTrustedResponse(
+            () => startHistoricalImport(message.tabId)
+                .then((importState) => ({ importState })),
+            sendResponse
+        );
+    }
+
+    if (message?.type === "LEETBRIDGE_CANCEL_IMPORT") {
+        if (!isExtensionPageSender(sender)) {
+            sendResponse({ ok: false, error: "Invalid sender" });
+            return false;
+        }
+
+        return sendTrustedResponse(
+            () => cancelHistoricalImport()
+                .then((importState) => ({ importState })),
+            sendResponse
+        );
+    }
+
+    if (message?.type === "LEETBRIDGE_IMPORT_BATCH") {
+        if (!isLeetCodeSender(sender)) {
+            sendResponse({ ok: false, error: "Invalid sender" });
+            return false;
+        }
+
+        return sendAsyncResponse(
+            processHistoricalImportBatch(message, sender)
+                .then((importState) => ({ importState })),
+            sendResponse
+        );
+    }
+
+    if (message?.type === "LEETBRIDGE_IMPORT_COMPLETE") {
+        if (!isLeetCodeSender(sender)) {
+            sendResponse({ ok: false, error: "Invalid sender" });
+            return false;
+        }
+
+        return sendAsyncResponse(
+            completeHistoricalImport(message, sender)
+                .then((importState) => ({ importState })),
+            sendResponse
+        );
+    }
+
+    if (message?.type === "LEETBRIDGE_IMPORT_ERROR") {
+        if (!isLeetCodeSender(sender)) {
+            sendResponse({ ok: false, error: "Invalid sender" });
+            return false;
+        }
+
+        return sendAsyncResponse(
+            failHistoricalImport(message, sender)
+                .then((importState) => ({ importState })),
             sendResponse
         );
     }
