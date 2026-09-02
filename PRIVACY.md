@@ -58,11 +58,14 @@ brokers, or analytics providers.
 
 GitHub and LeetCode process data under their own terms and privacy policies.
 
-When a LeetCode username is available during repository initialization,
-LeetBridge may add public image links from `leetcard.jacoblin.cool` to the
-generated GitHub README for a profile stats card and activity heatmap. These
-links contain the LeetCode username and are loaded by GitHub when the README is
-viewed. Users can remove those links by editing their repository README.
+## Limited use
+
+LeetBridge's use of information received from users complies with the Chrome
+Web Store User Data Policy, including the Limited Use requirements. LeetBridge
+uses and transfers user data only to provide its stated solution-syncing
+functionality. It does not sell user data, use it for advertising or credit
+decisions, or allow humans to read it. LeetBridge has no developer-operated
+backend that receives accepted source code or GitHub credentials.
 
 ## User choices
 

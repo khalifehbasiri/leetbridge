@@ -15,8 +15,8 @@ repository selected by the user.
 - Syncs accepted solutions directly from Chrome to GitHub.
 - Prevents duplicate syncs using LeetCode submission IDs.
 - Maintains problem READMEs and a repository-wide solution index.
-- Generates profile cards, an activity heatmap, a difficulty chart, and a
-  language summary for the solutions repository.
+- Generates a difficulty chart and language summary for the solutions
+  repository.
 - Imports the latest accepted historical solution for each problem and language.
 - Rebuilds the root README from solution folders when recovery is needed.
 - Includes Auto Sync and README update controls in the popup.
