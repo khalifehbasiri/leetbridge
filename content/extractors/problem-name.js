@@ -6,10 +6,14 @@ function getProblemName() {
         return null;
     }
 
-    const titleLink = document.querySelector(
-        `a[href="/problems/${CSS.escape(slug)}/"]`
-    );
-    const title = titleLink?.textContent?.trim();
+    const escapedSlug = CSS.escape(slug);
+    const titleElement = document.querySelector([
+        `a[href="/problems/${escapedSlug}/"]`,
+        `a[href^="/problems/${escapedSlug}/description"]`,
+        '[data-cy="question-title"]',
+        '[class*="text-title-large"]'
+    ].join(", "));
+    const title = titleElement?.textContent?.trim();
 
     return title ? title.replace(/^\d+\.\s*/, "") : null;
 }

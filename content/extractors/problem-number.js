@@ -6,9 +6,13 @@ function getProblemNumber() {
         return null;
     }
 
-    const title = document
-        .querySelector(`a[href="/problems/${CSS.escape(slug)}/"]`)
-        ?.textContent?.trim();
+    const escapedSlug = CSS.escape(slug);
+    const title = document.querySelector([
+        `a[href="/problems/${escapedSlug}/"]`,
+        `a[href^="/problems/${escapedSlug}/description"]`,
+        '[data-cy="question-title"]',
+        '[class*="text-title-large"]'
+    ].join(", "))?.textContent?.trim();
     const match = title?.match(/^(\d+)\./);
 
     return match ? Number(match[1]) : null;

@@ -1,11 +1,12 @@
 {
   "name": "LeetBridge",
   "description": "Sync accepted LeetCode solutions to GitHub.",
-  "version": "0.2.1",
+  "version": "0.3.1",
   "manifest_version": 3,
 
   "permissions": [
-    "tabs"
+    "tabs",
+    "storage"
   ],
 
   "content_scripts": [
@@ -30,6 +31,7 @@
         "content/extractors/username.js",
         "content/extractors/submission-status.js",
         "content/extractors/problem-code.js",
+        "content/extractors/submission-language.js",
         "content/leetcode.js"
       ]
     }
