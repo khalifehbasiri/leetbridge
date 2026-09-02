@@ -1,10 +1,13 @@
 {
-  "name": "leetbridge",
-  "description": "Base Level Extension",
-  "version": "1.0",
+  "name": "LeetBridge",
+  "description": "Sync accepted LeetCode solutions to GitHub.",
+  "version": "0.1.0",
   "manifest_version": 3,
+  "permissions": [
+    "tabs"
+  ],
   "action": {
     "default_popup": "popup/popup.html",
-    "default_icon": "LeetBridge-logo.png"
+    "default_icon": "resources/LeetBridge-logo.png"
   }
 }
