@@ -37,6 +37,10 @@
     }
   ],
 
+  "background": {
+    "service_worker": "background/service-worker.js"
+},
+
   "action": {
     "default_popup": "popup/popup.html",
     "default_icon": "resources/LeetBridge-logo.png"

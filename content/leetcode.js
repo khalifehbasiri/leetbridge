@@ -99,6 +99,11 @@ function scheduleScan() {
     scanTimer = setTimeout(handleUrlChange, 250);
 }
 
+chrome.runtime.sendMessage({
+    type: "LEETCODE_PAGE_DETECTED",
+    message: "LeetCode is open"
+});
+
 handleUrlChange();
 
 const observer = new MutationObserver(scheduleScan);
