@@ -1,4 +1,12 @@
-let activeHistoricalImport = null;
+// Serialize state changes so canceled or superseded runs cannot overwrite a new run.
+let importOperationQueue = Promise.resolve();
+const IMPORT_HEARTBEAT_TIMEOUT_MS = 120000;
+
+function queueImportOperation(operation) {
+    const result = importOperationQueue.then(operation);
+    importOperationQueue = result.catch(() => {});
+    return result;
+}
 
 function isImportingState(state) {
     return state?.status === "running";
@@ -6,258 +14,215 @@ function isImportingState(state) {
 
 async function updateHistoricalImportState(changes) {
     const current = await getLeetBridgeImportState();
-    const next = {
-        ...(current ?? {}),
-        ...changes,
-        updatedAt: new Date().toISOString()
-    };
-
-    return setLeetBridgeImportState(next);
+    return setLeetBridgeImportState({
+        ...(current ?? {}), ...changes, updatedAt: new Date().toISOString()
+    });
 }
 
-async function startHistoricalImport(tabId) {
-    const currentState = await getLeetBridgeImportState();
-
-    if (activeHistoricalImport && isImportingState(currentState)) {
-        throw new Error("A historical import is already running");
-    }
-
-    const stored = await chrome.storage.local.get(GITHUB_REPOSITORY_KEY);
-    const repository = stored[GITHUB_REPOSITORY_KEY];
-
-    if (!repository) {
-        throw new Error("Connect a GitHub repository before importing");
-    }
-
-    const tab = await chrome.tabs.get(tabId);
-    const url = new URL(tab.url ?? "");
-
-    if (
-        url.origin !== "https://leetcode.com"
-        || !url.pathname.startsWith("/problems/")
-    ) {
-        throw new Error("Open a LeetCode problem before importing");
-    }
-
-    const requestId = crypto.randomUUID();
-    const state = {
-        requestId,
-        tabId,
-        repository: repository.fullName,
-        status: "running",
-        phase: "scanning",
-        scannedCount: 0,
-        candidateCount: 0,
-        processedCount: 0,
-        syncedCount: 0,
-        skippedCount: 0,
-        failedCount: 0,
-        lastError: null,
-        startedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-    };
-
-    activeHistoricalImport = {
-        requestId,
-        tabId,
-        canceled: false
-    };
-    await setLeetBridgeImportState(state);
-
-    try {
-        const response = await chrome.tabs.sendMessage(tabId, {
-            type: "LEETBRIDGE_IMPORT_HISTORY",
-            requestId
+async function getHistoricalImportStatus() {
+    const state = await getLeetBridgeImportState();
+    if (isImportingState(state) && Date.now() - (state.heartbeatAt ?? 0) > IMPORT_HEARTBEAT_TIMEOUT_MS) {
+        return queueImportOperation(async () => {
+            const latest = await getLeetBridgeImportState();
+            if (!isImportingState(latest) || Date.now() - (latest.heartbeatAt ?? 0) <= IMPORT_HEARTBEAT_TIMEOUT_MS) return latest;
+            return updateHistoricalImportState({
+                status: "failed", phase: "stopped",
+                lastError: "The LeetCode tab stopped responding. Refresh a problem tab and resume from saved progress."
+            });
         });
-
-        if (!response?.ok) {
-            throw new Error("The LeetCode page did not start the import");
-        }
-    } catch (error) {
-        activeHistoricalImport = null;
-        await updateHistoricalImportState({
-            status: "failed",
-            phase: "stopped",
-            lastError: `${error.message}. Refresh the LeetCode tab and try again.`
-        });
-        throw error;
     }
-
     return state;
 }
 
-async function assertActiveHistoricalImport(message, sender) {
-    if (!activeHistoricalImport) {
-        const state = await getLeetBridgeImportState();
-
-        if (
-            state?.status === "running"
-            && state.requestId === message.requestId
-            && state.tabId === sender.tab?.id
-        ) {
-            activeHistoricalImport = {
-                requestId: state.requestId,
-                tabId: state.tabId,
-                canceled: false
-            };
-        }
+async function startHistoricalImport(tabId, restart = false) {
+    const current = await getLeetBridgeImportState();
+    if (isImportingState(current) && Date.now() - (current.heartbeatAt ?? 0) <= IMPORT_HEARTBEAT_TIMEOUT_MS) {
+        throw new Error("An import is already running. Cancel it before starting another.");
     }
-
-    if (
-        !activeHistoricalImport
-        || activeHistoricalImport.requestId !== message.requestId
-        || activeHistoricalImport.tabId !== sender.tab?.id
-    ) {
-        throw new Error("This historical import is no longer active");
+    const stored = await chrome.storage.local.get([
+        GITHUB_REPOSITORY_KEY, LEETBRIDGE_SYNCED_SUBMISSIONS_KEY
+    ]);
+    const repository = stored[GITHUB_REPOSITORY_KEY];
+    if (!repository) throw new Error("Connect a GitHub repository before importing");
+    const tab = await chrome.tabs.get(tabId);
+    const url = new URL(tab.url ?? "");
+    if (url.origin !== "https://leetcode.com" || !url.pathname.startsWith("/problems/")) {
+        throw new Error("Open a LeetCode problem before importing");
     }
+    const resume = !restart && current?.checkpoint
+        && current.repository === repository.fullName
+        && ["failed", "canceled", "running"].includes(current.status);
+    const checkpoint = resume ? current.checkpoint : {
+        offset: 0, lastKey: "", scannedCount: 0, seen: [],
+        username: null, done: false, lastPageSignature: ""
+    };
+    const requestId = crypto.randomUUID();
+    const state = {
+        requestId, tabId, repository: repository.fullName,
+        status: "running", phase: "scanning", checkpoint,
+        scannedCount: checkpoint.scannedCount,
+        candidateCount: resume ? current.candidateCount : 0,
+        processedCount: resume ? current.processedCount : 0,
+        syncedCount: resume ? current.syncedCount : 0,
+        skippedCount: resume ? current.skippedCount : 0,
+        failedCount: 0, lastError: null,
+        // A fresh scan does not bypass a server-requested cooldown.
+        retryAt: current?.retryAt > Date.now() ? current.retryAt : null,
+        heartbeatAt: Date.now(),
+        startedAt: resume ? current.startedAt : new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+    };
+    await setLeetBridgeImportState(state);
+    try {
+        const response = await chrome.tabs.sendMessage(tabId, {
+            type: "LEETBRIDGE_IMPORT_HISTORY", requestId, checkpoint,
+            retryAt: state.retryAt,
+            syncedSubmissionIds: stored[LEETBRIDGE_SYNCED_SUBMISSIONS_KEY]?.[repository.fullName] ?? []
+        });
+        if (!response?.ok) throw new Error("The LeetCode page did not start the import");
+    } catch (error) {
+        await updateHistoricalImportState({
+            status: "failed", phase: "stopped",
+            lastError: error.message + ". Refresh the LeetCode tab and try again."
+        });
+        throw error;
+    }
+    return state;
 }
 
-async function processHistoricalImportBatch(message, sender) {
-    await assertActiveHistoricalImport(message, sender);
-
-    if (activeHistoricalImport.canceled) {
-        return getLeetBridgeImportState();
+async function requireHistoricalImport(message, sender) {
+    const state = await getLeetBridgeImportState();
+    const stored = await chrome.storage.local.get(GITHUB_REPOSITORY_KEY);
+    if (!isImportingState(state) || state.requestId !== message.requestId
+        || state.tabId !== sender.tab?.id) {
+        throw new Error("This historical import is no longer active");
     }
+    if (stored[GITHUB_REPOSITORY_KEY]?.fullName !== state.repository) {
+        throw new Error("The selected GitHub repository changed. Start a new import.");
+    }
+    return state;
+}
 
-    const settings = await getLeetBridgeSettings();
-    const state = await updateHistoricalImportState({
-        phase: "syncing",
-        scannedCount: Number(message.scannedCount ?? 0),
-        candidateCount: Number(message.candidateCount ?? 0)
+async function initializeHistoricalImport(message, sender) {
+    const state = await requireHistoricalImport(message, sender);
+    if (typeof message.username !== "string" || !message.username || message.username.length > 100) {
+        throw new Error("Sign in to LeetCode before importing");
+    }
+    if (state.checkpoint.username && state.checkpoint.username !== message.username) {
+        throw new Error("This progress belongs to another LeetCode account. Use Start new import for the current account.");
+    }
+    return updateHistoricalImportState({
+        checkpoint: { ...state.checkpoint, username: message.username }, heartbeatAt: Date.now()
     });
-    const counts = {
-        processedCount: state.processedCount ?? 0,
-        syncedCount: state.syncedCount ?? 0,
-        skippedCount: state.skippedCount ?? 0,
-        failedCount: state.failedCount ?? 0,
-        lastError: state.lastError ?? null
-    };
+}
 
-    for (const submission of message.submissions ?? []) {
-        if (activeHistoricalImport.canceled) {
-            break;
-        }
-
-        counts.processedCount += 1;
-
-        if (!isValidProblemData(submission, sender, false)) {
-            counts.failedCount += 1;
-            counts.lastError = "LeetCode returned an invalid submission record";
-            continue;
-        }
-
-        try {
-            const result = await syncAcceptedSolutionToGitHub(submission, {
-                updateProblemReadme: settings.updateReadme,
-                updateRootReadme: false
-            });
-
-            if (result.skipped) {
-                counts.skippedCount += 1;
-            } else {
-                counts.syncedCount += 1;
-            }
-        } catch (error) {
-            counts.failedCount += 1;
-            counts.lastError = error.message;
-        }
+async function processHistoricalImportItem(message, sender) {
+    const state = await requireHistoricalImport(message, sender);
+    const data = message.data;
+    const identity = data?.problem?.slug + ":" + String(data?.submission?.language).toLowerCase();
+    if (!state.checkpoint.username || data?.username !== state.checkpoint.username
+        || message.identity !== identity || !SLUG_PATTERN.test(data?.problem?.slug ?? "")
+        || typeof data?.submission?.submissionId !== "string"
+        || !/^\d{1,100}$/.test(data.submission.submissionId)
+        || typeof data.submission.language !== "string" || data.submission.language.length > 50) {
+        throw new Error("Invalid historical submission");
     }
+    if (state.checkpoint.seen.includes(identity)) return state;
+    const repository = { fullName: state.repository };
+    const alreadySynced = await hasSyncedSubmission(repository, data.submission.submissionId);
+    if (!alreadySynced && !isValidProblemData(data, sender, false)) {
+        throw new Error("LeetCode returned an invalid submission record");
+    }
+    const settings = await getLeetBridgeSettings();
+    await updateHistoricalImportState({ phase: "syncing", heartbeatAt: Date.now() });
+    const result = alreadySynced ? { skipped: true }
+        : await syncAcceptedSolutionToGitHub(data, {
+            updateProblemReadme: settings.updateReadme, updateRootReadme: false
+        });
+    // Save an identity only after successful sync; a failed item remains resumable.
+    return updateHistoricalImportState({
+        checkpoint: { ...state.checkpoint, seen: [...state.checkpoint.seen, identity] },
+        candidateCount: state.candidateCount + 1,
+        processedCount: state.processedCount + 1,
+        syncedCount: state.syncedCount + (result.skipped ? 0 : 1),
+        skippedCount: state.skippedCount + (result.skipped ? 1 : 0),
+        phase: "scanning", heartbeatAt: Date.now()
+    });
+}
 
-    return updateHistoricalImportState(counts);
+async function checkpointHistoricalImport(message, sender) {
+    const state = await requireHistoricalImport(message, sender);
+    const point = message.checkpoint;
+    if (!state.checkpoint.username || !point || !Number.isSafeInteger(point.offset)
+        || point.offset < state.checkpoint.offset || point.offset > state.checkpoint.offset + 20
+        || !Number.isSafeInteger(point.scannedCount) || point.scannedCount !== point.offset
+        || typeof point.lastKey !== "string" || point.lastKey.length > 10000
+        || typeof point.lastPageSignature !== "string" || point.lastPageSignature.length > 2500
+        || typeof point.done !== "boolean" || (!point.done && point.offset === state.checkpoint.offset)) {
+        throw new Error("Invalid history checkpoint");
+    }
+    return updateHistoricalImportState({
+        checkpoint: {
+            ...state.checkpoint,
+            offset: point.offset, lastKey: point.lastKey,
+            scannedCount: point.scannedCount, done: point.done,
+            lastPageSignature: point.lastPageSignature
+        },
+        scannedCount: point.scannedCount, phase: "scanning", heartbeatAt: Date.now()
+    });
+}
+
+async function progressHistoricalImport(message, sender) {
+    await requireHistoricalImport(message, sender);
+    const changes = { heartbeatAt: Date.now() };
+    if (message.type === "LEETBRIDGE_IMPORT_PROGRESS") {
+        if (!["waiting", "scanning"].includes(message.phase)
+            || (message.retryAt !== null && (!Number.isFinite(message.retryAt)
+                || message.retryAt < 0 || message.retryAt > Date.now() + 86400000))) {
+            throw new Error("Invalid retry progress");
+        }
+        changes.phase = message.phase;
+        changes.retryAt = message.retryAt;
+    }
+    return updateHistoricalImportState(changes);
 }
 
 async function completeHistoricalImport(message, sender) {
-    await assertActiveHistoricalImport(message, sender);
-
-    if (activeHistoricalImport.canceled) {
-        return getLeetBridgeImportState();
-    }
-
-    const stored = await chrome.storage.local.get([
-        GITHUB_REPOSITORY_KEY,
-        "leetBridgeCurrent"
-    ]);
+    const state = await requireHistoricalImport(message, sender);
+    if (!state.checkpoint.done) throw new Error("Submission history has not finished scanning");
+    const stored = await chrome.storage.local.get(GITHUB_REPOSITORY_KEY);
     const settings = await getLeetBridgeSettings();
-    let rebuildResult = null;
-
-    await updateHistoricalImportState({
-        phase: settings.updateReadme ? "rebuilding_readme" : "finishing",
-        scannedCount: Number(message.scannedCount ?? 0),
-        candidateCount: Number(message.candidateCount ?? 0),
-        truncated: message.truncated === true
-    });
-
-    try {
-        if (settings.updateReadme && stored[GITHUB_REPOSITORY_KEY]) {
-            rebuildResult = await queueGitHubOperation(() => (
-                rebuildRepositoryReadme(
-                    stored[GITHUB_REPOSITORY_KEY],
-                    stored.leetBridgeCurrent?.username ?? null
-                )
-            ));
-        }
-    } catch (error) {
-        activeHistoricalImport = null;
-        return updateHistoricalImportState({
-            status: "failed",
-            phase: "stopped",
-            lastError: `Solutions were imported, but the README rebuild failed: ${error.message}`
-        });
+    await updateHistoricalImportState({ phase: "rebuilding_readme", heartbeatAt: Date.now() });
+    let result = null;
+    if (settings.updateReadme) {
+        result = await queueGitHubOperation(() => rebuildRepositoryReadme(
+            stored[GITHUB_REPOSITORY_KEY], state.checkpoint.username
+        ));
     }
-
-    const previous = await getLeetBridgeImportState();
-    const finalState = await updateHistoricalImportState({
-        status: previous?.failedCount > 0
-            ? "complete_with_errors"
-            : "complete",
-        phase: "complete",
-        completedAt: new Date().toISOString(),
-        problemCount: rebuildResult?.problemCount ?? null
+    return updateHistoricalImportState({
+        status: "complete", phase: "complete", lastError: null, retryAt: null,
+        completedAt: new Date().toISOString(), checkpoint: null,
+        problemCount: result?.problemCount ?? null
     });
-
-    activeHistoricalImport = null;
-    return finalState;
 }
 
 async function failHistoricalImport(message, sender) {
-    if (
-        activeHistoricalImport
-        && message.requestId
-        && activeHistoricalImport.requestId === message.requestId
-        && activeHistoricalImport.tabId === sender.tab?.id
-    ) {
-        activeHistoricalImport = null;
-    }
-
+    await requireHistoricalImport(message, sender);
     return updateHistoricalImportState({
-        status: "failed",
-        phase: "stopped",
-        lastError: message.error ?? "LeetCode history import failed"
+        status: "failed", phase: "stopped",
+        lastError: typeof message.error === "string" ? message.error.slice(0, 500) : "History import failed"
     });
 }
 
 async function cancelHistoricalImport() {
     const state = await getLeetBridgeImportState();
-
-    if (!isImportingState(state)) {
-        return state;
-    }
-
-    if (activeHistoricalImport) {
-        activeHistoricalImport.canceled = true;
-    }
-
-    if (state.tabId != null) {
-        await chrome.tabs.sendMessage(state.tabId, {
-            type: "LEETBRIDGE_CANCEL_IMPORT"
-        }).catch(() => {});
-    }
-
-    activeHistoricalImport = null;
-
-    return updateHistoricalImportState({
-        status: "canceled",
-        phase: "stopped",
-        canceledAt: new Date().toISOString()
+    if (!isImportingState(state)) return state;
+    // State is invalidated before asking the page to stop. Late replies are rejected.
+    const result = await updateHistoricalImportState({
+        status: "canceled", phase: "stopped", canceledAt: new Date().toISOString()
     });
+    await chrome.tabs.sendMessage(state.tabId, {
+        type: "LEETBRIDGE_CANCEL_IMPORT", requestId: state.requestId
+    }).catch(() => {});
+    return result;
 }

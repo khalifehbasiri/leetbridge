@@ -121,7 +121,7 @@ async function getGitHubConnectionStatus() {
     const lastSync = stored[GITHUB_LAST_SYNC_KEY];
     const [settings, importState] = await Promise.all([
         getLeetBridgeSettings(),
-        getLeetBridgeImportState()
+        getHistoricalImportStatus()
     ]);
     let githubUsername = stored[GITHUB_PROFILE_KEY]?.login ?? null;
     let repositoryState = stored[GITHUB_REPOSITORY_STATE_KEY] ?? null;
@@ -171,7 +171,11 @@ async function getGitHubConnectionStatus() {
         repositoryState,
         initializationError,
         settings,
-        importState,
+        importState: importState ? {
+            ...importState,
+            // Popup needs the resume flag, not the potentially large identity list.
+            checkpoint: importState.checkpoint ? { offset: importState.checkpoint.offset } : null
+        } : null,
         lastSync: lastSync ? {
             ok: lastSync.ok,
             repository: lastSync.repository ?? null,

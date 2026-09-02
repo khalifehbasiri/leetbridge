@@ -268,10 +268,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         return sendTrustedResponse(
-            () => selectGitHubRepository(
-                message.repositoryId,
-                message.installationId
-            ).then((repository) => ({ repository })),
+            () => queueImportOperation(async () => {
+                await cancelHistoricalImport();
+                const repository = await selectGitHubRepository(message.repositoryId, message.installationId);
+                return { repository };
+            }),
             sendResponse
         );
     }
@@ -324,7 +325,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         return sendTrustedResponse(
-            () => startHistoricalImport(message.tabId)
+            () => queueImportOperation(() => startHistoricalImport(message.tabId, message.restart === true))
                 .then((importState) => ({ importState })),
             sendResponse
         );
@@ -337,47 +338,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         return sendTrustedResponse(
-            () => cancelHistoricalImport()
+            () => queueImportOperation(cancelHistoricalImport)
                 .then((importState) => ({ importState })),
             sendResponse
         );
     }
 
-    if (message?.type === "LEETBRIDGE_IMPORT_BATCH") {
+    const historyHandlers = {
+        LEETBRIDGE_IMPORT_INITIALIZE: initializeHistoricalImport,
+        LEETBRIDGE_IMPORT_ITEM: processHistoricalImportItem,
+        LEETBRIDGE_IMPORT_CHECKPOINT: checkpointHistoricalImport,
+        LEETBRIDGE_IMPORT_PROGRESS: progressHistoricalImport,
+        LEETBRIDGE_IMPORT_HEARTBEAT: progressHistoricalImport,
+        LEETBRIDGE_IMPORT_COMPLETE: completeHistoricalImport,
+        LEETBRIDGE_IMPORT_ERROR: failHistoricalImport
+    };
+    if (Object.hasOwn(historyHandlers, message?.type)) {
         if (!isLeetCodeSender(sender)) {
             sendResponse({ ok: false, error: "Invalid sender" });
             return false;
         }
 
-        return sendAsyncResponse(
-            processHistoricalImportBatch(message, sender)
-                .then((importState) => ({ importState })),
-            sendResponse
-        );
-    }
-
-    if (message?.type === "LEETBRIDGE_IMPORT_COMPLETE") {
-        if (!isLeetCodeSender(sender)) {
-            sendResponse({ ok: false, error: "Invalid sender" });
-            return false;
-        }
-
-        return sendAsyncResponse(
-            completeHistoricalImport(message, sender)
-                .then((importState) => ({ importState })),
-            sendResponse
-        );
-    }
-
-    if (message?.type === "LEETBRIDGE_IMPORT_ERROR") {
-        if (!isLeetCodeSender(sender)) {
-            sendResponse({ ok: false, error: "Invalid sender" });
-            return false;
-        }
-
-        return sendAsyncResponse(
-            failHistoricalImport(message, sender)
-                .then((importState) => ({ importState })),
+        return sendTrustedResponse(
+            () => queueImportOperation(() => historyHandlers[message.type](message, sender))
+                .then(() => ({})),
             sendResponse
         );
     }
@@ -389,7 +373,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         return sendTrustedResponse(
-            () => disconnectGitHub().then(() => ({})),
+            () => queueImportOperation(async () => {
+                await cancelHistoricalImport();
+                await disconnectGitHub();
+                return {};
+            }),
             sendResponse
         );
     }

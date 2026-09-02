@@ -19,6 +19,11 @@ authenticated LeetCode submission history to find the latest accepted
 solution for each problem and language. Earlier duplicate submissions are not
 sent to GitHub.
 
+To resume interrupted imports, the extension stores a local checkpoint with
+the LeetCode username, pagination position, processed problem/language
+identifiers, and any retry cooldown. It removes the checkpoint when the import
+finishes, when a new import replaces it, or when GitHub is disconnected.
+
 When a user connects GitHub, LeetBridge also processes:
 
 - the repositories made available to the LeetBridge GitHub App;

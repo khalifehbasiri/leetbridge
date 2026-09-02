@@ -1,7 +1,7 @@
 {
   "name": "LeetBridge",
   "description": "Automatically sync accepted LeetCode solutions to a polished GitHub repository.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "manifest_version": 3,
   "minimum_chrome_version": "111",
   "incognito": "not_allowed",
@@ -23,6 +23,7 @@
         "https://leetcode.com/problems/*"
       ],
       "js": [
+        "content/page/history-import.js",
         "content/page/submission-bridge.js"
       ],
       "run_at": "document_start",

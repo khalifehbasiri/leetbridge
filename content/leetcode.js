@@ -102,18 +102,31 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
 
     if (message?.type === "LEETBRIDGE_IMPORT_HISTORY") {
+        const requestId = message.requestId;
+        historyRequestId = message.requestId;
+        clearInterval(historyHeartbeat);
+        historyHeartbeat = setInterval(() => {
+            chrome.runtime.sendMessage({
+                type: "LEETBRIDGE_IMPORT_HEARTBEAT", requestId
+            }).then((response) => {
+                if (!response?.ok) stopHistoryBridge(requestId);
+            }).catch(() => stopHistoryBridge(requestId));
+        }, 10000);
         document.dispatchEvent(new CustomEvent(
             "leetbridge:history-import-request",
-            { detail: JSON.stringify({ requestId: message.requestId }) }
+            { detail: JSON.stringify({
+                requestId: message.requestId,
+                checkpoint: message.checkpoint,
+                syncedSubmissionIds: message.syncedSubmissionIds,
+                retryAt: message.retryAt
+            }) }
         ));
         sendResponse({ ok: true });
         return false;
     }
 
     if (message?.type === "LEETBRIDGE_CANCEL_IMPORT") {
-        document.dispatchEvent(new CustomEvent(
-            "leetbridge:history-import-cancel"
-        ));
+        stopHistoryBridge(message.requestId);
         sendResponse({ ok: true });
         return false;
     }
@@ -121,29 +134,42 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return false;
 });
 
-let historyImportMessageQueue = Promise.resolve();
+let historyRequestId = null;
+let historyHeartbeat = null;
+const historyActions = new Set([
+    "LEETBRIDGE_IMPORT_INITIALIZE", "LEETBRIDGE_IMPORT_ITEM",
+    "LEETBRIDGE_IMPORT_CHECKPOINT", "LEETBRIDGE_IMPORT_PROGRESS",
+    "LEETBRIDGE_IMPORT_COMPLETE", "LEETBRIDGE_IMPORT_ERROR"
+]);
 
-function queueHistoryImportMessage(type, detail) {
-    historyImportMessageQueue = historyImportMessageQueue.then(async () => {
-        const payload = JSON.parse(detail);
-        const response = await chrome.runtime.sendMessage({ type, ...payload });
-
-        if (!response?.ok) {
-            throw new Error(response?.error ?? "Historical import failed");
-        }
-    }).catch((error) => {
-        console.warn("LeetBridge historical import error:", error);
-    });
+function stopHistoryBridge(requestId) {
+    if (!requestId || historyRequestId !== requestId) return;
+    clearInterval(historyHeartbeat);
+    historyRequestId = null;
+    document.dispatchEvent(new CustomEvent("leetbridge:history-import-cancel", {
+        detail: JSON.stringify({ requestId })
+    }));
 }
 
-document.addEventListener("leetbridge:history-import-batch", (event) => {
-    queueHistoryImportMessage("LEETBRIDGE_IMPORT_BATCH", event.detail);
+document.addEventListener("leetbridge:history-import-call", async (event) => {
+    let payload;
+    try { payload = JSON.parse(event.detail); } catch { return; }
+    if (payload.requestId !== historyRequestId || !historyActions.has(payload.type)) return;
+    let response;
+    try {
+        response = await chrome.runtime.sendMessage(payload);
+    } catch {
+        response = { ok: false, error: "Extension connection lost. Refresh this tab and resume the import." };
+    }
+    // Only send acknowledgements to the page, never extension storage or tokens.
+    document.dispatchEvent(new CustomEvent("leetbridge:history-import-reply", {
+        detail: JSON.stringify({
+            requestId: payload.requestId, callId: payload.callId,
+            ok: response?.ok === true, error: response?.error
+        })
+    }));
 });
 
-document.addEventListener("leetbridge:history-import-complete", (event) => {
-    queueHistoryImportMessage("LEETBRIDGE_IMPORT_COMPLETE", event.detail);
-});
-
-document.addEventListener("leetbridge:history-import-error", (event) => {
-    queueHistoryImportMessage("LEETBRIDGE_IMPORT_ERROR", event.detail);
+document.addEventListener("leetbridge:history-import-ended", (event) => {
+    try { stopHistoryBridge(JSON.parse(event.detail).requestId); } catch { /* Ignore malformed events. */ }
 });

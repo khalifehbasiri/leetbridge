@@ -10,7 +10,7 @@ const elements = Object.fromEntries([
     "github-account", "github-repository", "github-button",
     "auto-sync-toggle", "readme-toggle", "last-sync", "import-panel",
     "import-title", "import-summary", "import-spinner", "import-button",
-    "cancel-import-button", "rebuild-button", "message"
+    "cancel-import-button", "restart-import-button", "rebuild-button", "message"
 ].map((id) => [id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()),
     document.getElementById(id)]));
 
@@ -52,9 +52,9 @@ async function loadLeetCodeState() {
         return;
     }
 
-    const response = await chrome.runtime.sendMessage({
-        type: "LEETBRIDGE_GET_STORED_DATA"
-    });
+    const response = await chrome.tabs.sendMessage(activeTab.id, {
+        type: "LEETBRIDGE_GET_DATA"
+    }).catch(() => null);
 
     leetCodeData = response?.ok ? response.data : null;
     renderLeetCodeState();
@@ -65,6 +65,7 @@ function renderLeetCodeState() {
     const problem = leetCodeData?.problem;
 
     elements.leetcodeIndicator.classList.toggle("connected", connected);
+    elements.leetcodeIndicator.title = "Username detected on this tab. History access is verified when importing.";
     elements.leetcodeAccount.textContent = connected
         ? leetCodeData.username
         : isLeetCodeProblemTab() ? "Sign in required" : "Not detected";
@@ -190,6 +191,7 @@ function renderImportState() {
     elements.importPanel.hidden = !state;
     elements.importSpinner.hidden = !running;
     elements.cancelImportButton.hidden = !running;
+    elements.restartImportButton.hidden = !state?.checkpoint || running;
     elements.importButton.disabled = running
         || !githubStatus?.repository
         || !isLeetCodeProblemTab();
@@ -200,23 +202,22 @@ function renderImportState() {
     }
 
     const titles = {
-        running: state.phase === "rebuilding_readme"
-            ? "Rebuilding repository index"
-            : "Importing previous solutions",
+        running: state.phase === "waiting" ? "Waiting before retrying"
+            : state.phase === "rebuilding_readme" ? "Rebuilding repository index"
+                : "Importing previous solutions",
         complete: "Historical import complete",
         complete_with_errors: "Import completed with warnings",
         canceled: "Historical import canceled",
         failed: "Historical import stopped"
     };
     elements.importTitle.textContent = titles[state.status] ?? "Historical import";
+    const counts = `${state.scannedCount ?? 0} submissions scanned · `
+        + `${state.syncedCount ?? 0} synced · ${state.skippedCount ?? 0} skipped`;
+    const retrySeconds = Math.max(0, Math.ceil(((state.retryAt ?? 0) - Date.now()) / 1000));
     elements.importSummary.textContent = running
-        ? `${state.scannedCount ?? 0} submissions scanned · `
-            + `${state.syncedCount ?? 0} synced · ${state.skippedCount ?? 0} skipped`
-        : state.lastError
-            ? state.lastError
-            : `${state.syncedCount ?? 0} synced · ${state.skippedCount ?? 0} skipped`
-                + ` · ${state.failedCount ?? 0} failed`;
-    elements.importButton.textContent = ["failed", "canceled"].includes(state.status)
+        ? `${counts}${retrySeconds ? ` · Retrying in ${retrySeconds}s` : ""}`
+        : `${counts}${state.lastError ? `. ${state.lastError}` : ""}`;
+    elements.importButton.textContent = state.checkpoint && ["failed", "canceled"].includes(state.status)
         ? "Resume import"
         : "Import previous solutions";
 
@@ -244,7 +245,7 @@ async function updateSettings() {
     showMessage("Settings saved.");
 }
 
-async function startImport() {
+async function startImport(restart = false) {
     if (!isLeetCodeProblemTab()) {
         throw new Error("Open a LeetCode problem before importing");
     }
@@ -253,7 +254,8 @@ async function startImport() {
     clearMessage();
     const response = await chrome.runtime.sendMessage({
         type: "LEETBRIDGE_START_IMPORT",
-        tabId: activeTab.id
+        tabId: activeTab.id,
+        restart
     });
 
     if (!response?.ok) {
@@ -322,6 +324,13 @@ elements.importButton.addEventListener("click", () => {
     startImport().catch((error) => {
         elements.importButton.disabled = false;
         showMessage(error.message, true);
+        loadGitHubStatus().catch(() => {});
+    });
+});
+elements.restartImportButton.addEventListener("click", () => {
+    startImport(true).catch((error) => {
+        showMessage(error.message, true);
+        loadGitHubStatus().catch(() => {});
     });
 });
 elements.cancelImportButton.addEventListener("click", async () => {

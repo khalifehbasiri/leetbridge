@@ -66,6 +66,14 @@ The popup also lets users import previous accepted solutions, pause automatic
 syncing, disable generated README updates, and rebuild the repository index
 from the solution folders.
 
+Historical import reads 20 submissions per request and continues until LeetCode
+reports the end of the history. There is no fixed total-submission cutoff.
+Requests are paced, and temporary throttling is retried with a cooldown.
+Keep the LeetCode tab open during import. If an import stops, Resume continues
+from a saved page checkpoint and skips solutions already handled. Start new
+import scans again from the beginning. Access denials and verification checks
+still require attention on LeetCode; the extension does not bypass them.
+
 Users never edit extension files or paste authentication tokens.
 
 ## Security and privacy
