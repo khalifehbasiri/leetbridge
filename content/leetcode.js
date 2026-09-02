@@ -1,37 +1,60 @@
 function getProblemSlug() {
-    const parts = window.location.pathname
-        .split("/")
-        .filter(Boolean);
+    const parts = window.location.pathname.split("/").filter(Boolean);
 
-    if (parts.length >= 2 && parts[0] === "problems") {
-        return parts[1];
-    }
-    return null;
+    return parts.length >= 2 && parts[0] === "problems"
+        ? parts[1]
+        : null;
 }
 
-// Track the last processed slug to avoid duplicate logs on every tiny DOM change
 let lastSlug = null;
+let lastSnapshot = null;
+let scanTimer = null;
+
+function collectProblemData() {
+    return {
+        problemName: getProblemName(),
+        problemNumber: getProblemNumber(),
+        difficulty: getDifficulty(),
+        username: getUsername(),
+        submissionStatus: getSubmissionStatus(),
+        problemCode: getProblemCode()
+    };
+}
 
 function handleUrlChange() {
     const problemSlug = getProblemSlug();
 
-    // Only run if we are on a valid problem page and it's a NEW problem
-    if (problemSlug && problemSlug !== lastSlug) {
+    if (!problemSlug) {
+        lastSlug = null;
+        lastSnapshot = null;
+        return;
+    }
+
+    if (problemSlug !== lastSlug) {
         lastSlug = problemSlug;
+        lastSnapshot = null;
         console.log("LeetBridge detected problem:", problemSlug);
+    }
+
+    const data = collectProblemData();
+    const snapshot = JSON.stringify(data);
+
+    if (snapshot !== lastSnapshot) {
+        lastSnapshot = snapshot;
+        console.log("LeetBridge problem data:", data);
     }
 }
 
-// 1. Run immediately on initial hard page load
+function scheduleScan() {
+    clearTimeout(scanTimer);
+    scanTimer = setTimeout(handleUrlChange, 250);
+}
+
 handleUrlChange();
 
-// 2. Set up the MutationObserver to listen for SPA navigation changes
-const observer = new MutationObserver(() => {
-    handleUrlChange();
-});
-
-// 3. Start observing the document body for changes
+const observer = new MutationObserver(scheduleScan);
 observer.observe(document.body, {
     childList: true,
-    subtree: true
+    subtree: true,
+    characterData: true
 });

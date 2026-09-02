@@ -1,7 +1,7 @@
 {
   "name": "LeetBridge",
   "description": "Sync accepted LeetCode solutions to GitHub.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "manifest_version": 3,
 
   "permissions": [
@@ -11,9 +11,25 @@
   "content_scripts": [
     {
       "matches": [
-        "https://leetcode.com/problems/*"
+        "https://leetcode.com/*"
       ],
       "js": [
+        "content/page/submission-bridge.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://leetcode.com/*"
+      ],
+      "js": [
+        "content/extractors/problem-name.js",
+        "content/extractors/problem-number.js",
+        "content/extractors/difficulty.js",
+        "content/extractors/username.js",
+        "content/extractors/submission-status.js",
+        "content/extractors/problem-code.js",
         "content/leetcode.js"
       ]
     }
