@@ -53,7 +53,7 @@ Users never edit extension files or paste authentication tokens.
 LeetBridge has no developer-operated data backend. GitHub credentials remain
 in trusted Chrome extension storage, and accepted code is sent directly to the
 repository chosen by the user. The repository contains only the public GitHub
-App client ID and app slug—never a client secret or private key.
+App client ID and app slug, never a client secret or private key.
 
 GitHub's Contents permission applies to the complete selected repository, so a
 dedicated solutions repository is recommended to keep access isolated.
@@ -89,4 +89,6 @@ selectors and submission detection are verified before each store release.
 
 ## License
 
-LeetBridge is available under the [MIT License](LICENSE).
+LeetBridge is source available, not open source. The code may be viewed for
+portfolio evaluation, but no permission is granted to use, copy, modify, or
+redistribute it without prior written permission. See [LICENSE](LICENSE).

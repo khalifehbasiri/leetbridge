@@ -31,7 +31,7 @@ async function detectLeetCode() {
 
         renderProblemData(response.data);
     } catch {
-        status.textContent = "✓ LeetCode detected — refresh this tab";
+        status.textContent = "✓ LeetCode detected. Refresh this tab.";
     }
 }
 
