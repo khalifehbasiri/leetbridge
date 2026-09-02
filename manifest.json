@@ -1,7 +1,7 @@
 {
   "name": "LeetBridge",
   "description": "Sync accepted LeetCode solutions to GitHub.",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "manifest_version": 3,
 
   "permissions": [
@@ -39,7 +39,7 @@
 
   "background": {
     "service_worker": "background/service-worker.js"
-},
+  },
 
   "action": {
     "default_popup": "popup/popup.html",

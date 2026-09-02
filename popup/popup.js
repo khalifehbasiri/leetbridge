@@ -21,8 +21,8 @@ async function detectLeetCode() {
     details.hidden = false;
 
     try {
-        const response = await chrome.tabs.sendMessage(tab.id, {
-            type: "LEETBRIDGE_GET_DATA"
+        const response = await chrome.runtime.sendMessage({
+            type: "LEETBRIDGE_GET_STORED_DATA"
         });
 
         if (!response?.ok || !response.data) {

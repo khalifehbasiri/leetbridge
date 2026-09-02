@@ -30,32 +30,14 @@ function collectProblemData() {
 
 async function persistProblemData(data) {
     try {
-        await chrome.storage.local.set({
-            leetBridgeCurrent: data
+        const response = await chrome.runtime.sendMessage({
+            type: "LEETBRIDGE_STORE_DATA",
+            data
         });
 
-        if (!data.submission.accepted || !data.submission.code) {
-            return;
+        if (!response?.ok) {
+            throw new Error(response?.error ?? "Storage request failed");
         }
-
-        const result = await chrome.storage.local.get(
-            "leetBridgeAcceptedSolutions"
-        );
-        const solutions = result.leetBridgeAcceptedSolutions ?? {};
-        const solutionKey = [
-            data.username ?? "anonymous",
-            data.problem.slug,
-            data.submission.language ?? "unknown"
-        ].join(":");
-
-        solutions[solutionKey] = {
-            ...data,
-            capturedAt: new Date().toISOString()
-        };
-
-        await chrome.storage.local.set({
-            leetBridgeAcceptedSolutions: solutions
-        });
     } catch (error) {
         console.warn("LeetBridge could not save problem data:", error);
     }
@@ -66,7 +48,9 @@ function handleUrlChange() {
 
     if (!problemSlug) {
         if (lastSlug !== null) {
-            chrome.storage.local.set({ leetBridgeCurrent: null });
+            chrome.runtime.sendMessage({
+                type: "LEETBRIDGE_CLEAR_CURRENT"
+            }).catch(() => {});
         }
 
         lastSlug = null;
@@ -98,11 +82,6 @@ function scheduleScan() {
     clearTimeout(scanTimer);
     scanTimer = setTimeout(handleUrlChange, 250);
 }
-
-chrome.runtime.sendMessage({
-    type: "LEETCODE_PAGE_DETECTED",
-    message: "LeetCode is open"
-});
 
 handleUrlChange();
 
