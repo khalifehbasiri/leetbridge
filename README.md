@@ -26,16 +26,25 @@ Content scripts normalize problem and submission data
         ↓
 Background service worker stores the current state
         ↓
-GitHub Contents API writes the accepted solution
+GitHub Contents API writes the solution and generated indexes
         ↓
-<number>-<slug>/solution.<extension>
+<four-digit-number>-<slug>/
+├── README.md
+└── solution.<extension>
 ```
 
 Example output:
 
 ```text
-1-two-sum/solution.py
+README.md
+0001-two-sum/
+├── README.md
+└── solution.py
 ```
+
+The repository README tracks progress and links every synced solution. Content
+outside the `SOLUTIONS_START` and `SOLUTIONS_END` markers is preserved when
+LeetBridge refreshes the generated section.
 
 ## User flow
 

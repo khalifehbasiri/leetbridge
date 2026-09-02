@@ -1,7 +1,7 @@
 {
   "name": "LeetBridge",
   "description": "Sync accepted LeetCode solutions to GitHub.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "manifest_version": 3,
   "minimum_chrome_version": "111",
   "incognito": "not_allowed",

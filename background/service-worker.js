@@ -1,6 +1,7 @@
 importScripts(
     "github-config.js",
     "github-auth.js",
+    "github-readme.js",
     "github-api.js"
 );
 

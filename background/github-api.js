@@ -115,32 +115,72 @@ async function getGitHubConnectionStatus() {
     };
 }
 
-function getSolutionFileExtension(language) {
-    const extensions = {
-        bash: "sh",
-        c: "c",
-        cpp: "cpp",
-        csharp: "cs",
-        dart: "dart",
-        elixir: "ex",
-        erlang: "erl",
-        golang: "go",
-        java: "java",
-        javascript: "js",
-        kotlin: "kt",
-        mysql: "sql",
-        php: "php",
-        python: "py",
-        python3: "py",
-        racket: "rkt",
-        ruby: "rb",
-        rust: "rs",
-        scala: "scala",
-        swift: "swift",
-        typescript: "ts"
-    };
+const REPOSITORY_FORMAT_VERSION = 1;
 
-    return extensions[String(language ?? "").toLowerCase()] ?? "txt";
+const LANGUAGE_DETAILS = Object.freeze({
+    bash: { extension: "sh", name: "Bash" },
+    c: { extension: "c", name: "C" },
+    "c++": { extension: "cpp", name: "C++" },
+    cpp: { extension: "cpp", name: "C++" },
+    "c#": { extension: "cs", name: "C#" },
+    csharp: { extension: "cs", name: "C#" },
+    dart: { extension: "dart", name: "Dart" },
+    elixir: { extension: "ex", name: "Elixir" },
+    erlang: { extension: "erl", name: "Erlang" },
+    go: { extension: "go", name: "Go" },
+    golang: { extension: "go", name: "Go" },
+    java: { extension: "java", name: "Java" },
+    javascript: { extension: "js", name: "JavaScript" },
+    kotlin: { extension: "kt", name: "Kotlin" },
+    mssql: { extension: "sql", name: "MS SQL Server" },
+    mysql: { extension: "sql", name: "MySQL" },
+    oracle: { extension: "sql", name: "Oracle SQL" },
+    oraclesql: { extension: "sql", name: "Oracle SQL" },
+    pandas: { extension: "py", name: "Pandas" },
+    php: { extension: "php", name: "PHP" },
+    postgresql: { extension: "sql", name: "PostgreSQL" },
+    python: { extension: "py", name: "Python" },
+    python3: { extension: "py", name: "Python" },
+    pythondata: { extension: "py", name: "Pandas" },
+    racket: { extension: "rkt", name: "Racket" },
+    ruby: { extension: "rb", name: "Ruby" },
+    rust: { extension: "rs", name: "Rust" },
+    scala: { extension: "scala", name: "Scala" },
+    swift: { extension: "swift", name: "Swift" },
+    typescript: { extension: "ts", name: "TypeScript" }
+});
+
+const EXTENSION_LANGUAGE_NAMES = Object.freeze({
+    c: "C",
+    cpp: "C++",
+    cs: "C#",
+    dart: "Dart",
+    ex: "Elixir",
+    erl: "Erlang",
+    go: "Go",
+    java: "Java",
+    js: "JavaScript",
+    kt: "Kotlin",
+    php: "PHP",
+    py: "Python",
+    rkt: "Racket",
+    rb: "Ruby",
+    rs: "Rust",
+    scala: "Scala",
+    sh: "Bash",
+    sql: "SQL",
+    swift: "Swift",
+    ts: "TypeScript",
+    txt: "Text"
+});
+
+function getLanguageDetails(language) {
+    return LANGUAGE_DETAILS[String(language ?? "").toLowerCase()]
+        ?? { extension: "txt", name: "Text" };
+}
+
+function getSolutionFileExtension(language) {
+    return getLanguageDetails(language).extension;
 }
 
 function encodeUtf8Base64(value) {
@@ -158,6 +198,94 @@ function encodeGitHubPath(path) {
     return path.split("/").map(encodeURIComponent).join("/");
 }
 
+function decodeUtf8Base64(value) {
+    const binary = atob(String(value ?? "").replace(/\s/g, ""));
+    const bytes = Uint8Array.from(binary, (character) => (
+        character.charCodeAt(0)
+    ));
+
+    return new TextDecoder().decode(bytes);
+}
+
+function getRepositoryContentsPath(repository, path) {
+    return `/repos/${encodeURIComponent(repository.owner)}`
+        + `/${encodeURIComponent(repository.name)}/contents/`
+        + encodeGitHubPath(path);
+}
+
+async function getGitHubContent(repository, path) {
+    const contentsPath = getRepositoryContentsPath(repository, path);
+
+    try {
+        return await githubApiRequest(
+            `${contentsPath}?ref=${encodeURIComponent(repository.defaultBranch)}`
+        );
+    } catch (error) {
+        if (error.status === 404) {
+            return null;
+        }
+
+        throw error;
+    }
+}
+
+async function upsertGitHubFile(repository, path, content, message) {
+    const existingFile = await getGitHubContent(repository, path);
+
+    if (Array.isArray(existingFile)) {
+        throw new Error(`${path} is a directory, not a file`);
+    }
+
+    if (existingFile && typeof existingFile.content !== "string") {
+        throw new Error(`${path} is too large for LeetBridge to update safely`);
+    }
+
+    if (
+        existingFile
+        && decodeUtf8Base64(existingFile.content) === content
+    ) {
+        return { changed: false, commitUrl: null };
+    }
+
+    const requestBody = {
+        message,
+        content: encodeUtf8Base64(content),
+        branch: repository.defaultBranch
+    };
+
+    if (existingFile?.sha) {
+        requestBody.sha = existingFile.sha;
+    }
+
+    const result = await githubApiRequest(
+        getRepositoryContentsPath(repository, path),
+        {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(requestBody)
+        }
+    );
+
+    return {
+        changed: true,
+        commitUrl: result.commit?.html_url ?? null
+    };
+}
+
+async function listGitHubDirectory(repository, path) {
+    const contents = await getGitHubContent(repository, path);
+
+    if (contents === null) {
+        return [];
+    }
+
+    if (!Array.isArray(contents)) {
+        throw new Error(`${path} is a file, not a directory`);
+    }
+
+    return contents;
+}
+
 function getCommitSubject(problem) {
     const label = String(problem.title ?? problem.slug)
         .replace(/[\r\n]+/g, " ")
@@ -169,7 +297,12 @@ function getCommitSubject(problem) {
 }
 
 async function getSolutionFingerprint(repository, filePath, code) {
-    const value = [repository.fullName, filePath, code].join("\n");
+    const value = [
+        REPOSITORY_FORMAT_VERSION,
+        repository.fullName,
+        filePath,
+        code
+    ].join("\n");
     const digest = await crypto.subtle.digest(
         "SHA-256",
         new TextEncoder().encode(value)
@@ -180,7 +313,97 @@ async function getSolutionFingerprint(repository, filePath, code) {
     )).join("");
 }
 
-async function syncAcceptedSolutionToGitHub(data) {
+function getProblemFolderName(problem) {
+    if (!problem.number) {
+        return problem.slug;
+    }
+
+    return `${String(problem.number).padStart(4, "0")}-${problem.slug}`;
+}
+
+function getLanguageNameFromFile(fileName, currentLanguage) {
+    const extension = fileName.split(".").pop()?.toLowerCase() ?? "txt";
+    const currentDetails = getLanguageDetails(currentLanguage);
+
+    if (extension === currentDetails.extension) {
+        return currentDetails.name;
+    }
+
+    return EXTENSION_LANGUAGE_NAMES[extension]
+        ?? extension.toUpperCase();
+}
+
+async function getProblemSolutions(repository, folder, currentLanguage) {
+    const directory = await listGitHubDirectory(repository, folder);
+
+    return directory
+        .filter((item) => (
+            item.type === "file"
+            && /^solution\.[a-z0-9]+$/i.test(item.name)
+        ))
+        .map((item) => ({
+            language: getLanguageNameFromFile(item.name, currentLanguage),
+            path: `${folder}/${item.name}`
+        }))
+        .sort((first, second) => (
+            first.language.localeCompare(second.language)
+        ));
+}
+
+async function updateRepositoryReadmes(repository, data, folder, solutions) {
+    const problemReadmePath = `${folder}/README.md`;
+    const problemReadme = buildProblemReadme(data.problem, solutions);
+    const problemResult = await upsertGitHubFile(
+        repository,
+        problemReadmePath,
+        problemReadme,
+        `Update README for ${normalizeInlineText(
+            data.problem.title,
+            data.problem.slug
+        )}`
+    );
+    const existingRootFile = await getGitHubContent(
+        repository,
+        ROOT_README_PATH
+    );
+
+    if (Array.isArray(existingRootFile)) {
+        throw new Error("README.md is a directory, not a file");
+    }
+
+    if (existingRootFile && typeof existingRootFile.content !== "string") {
+        throw new Error(
+            "README.md is too large for LeetBridge to update safely"
+        );
+    }
+
+    const existingRootReadme = existingRootFile
+        ? decodeUtf8Base64(existingRootFile.content)
+        : "";
+    const entries = mergeProblemEntry(
+        parseRootReadmeEntries(existingRootReadme),
+        data.problem,
+        solutions
+    );
+    const nextRootReadme = updateRootReadme(
+        existingRootReadme,
+        buildRootReadmeSection(entries)
+    );
+    const rootResult = await upsertGitHubFile(
+        repository,
+        ROOT_README_PATH,
+        nextRootReadme,
+        "Update LeetCode solutions index"
+    );
+
+    return {
+        problemReadmePath,
+        problemResult,
+        rootResult
+    };
+}
+
+async function performAcceptedSolutionSync(data) {
     const stored = await chrome.storage.local.get([
         GITHUB_REPOSITORY_KEY,
         GITHUB_LAST_SYNC_KEY
@@ -192,9 +415,7 @@ async function syncAcceptedSolutionToGitHub(data) {
     }
 
     const extension = getSolutionFileExtension(data.submission.language);
-    const folder = data.problem.number
-        ? `${data.problem.number}-${data.problem.slug}`
-        : data.problem.slug;
+    const folder = getProblemFolderName(data.problem);
     const filePath = `${folder}/solution.${extension}`;
     const fingerprint = await getSolutionFingerprint(
         repository,
@@ -204,47 +425,45 @@ async function syncAcceptedSolutionToGitHub(data) {
 
     if (
         stored[GITHUB_LAST_SYNC_KEY]?.ok === true
+        && stored[GITHUB_LAST_SYNC_KEY]?.formatVersion
+            === REPOSITORY_FORMAT_VERSION
         && stored[GITHUB_LAST_SYNC_KEY]?.fingerprint === fingerprint
     ) {
         return { skipped: true, reason: "Solution is already synced" };
     }
 
-    const contentsPath = `/repos/${encodeURIComponent(repository.owner)}`
-        + `/${encodeURIComponent(repository.name)}/contents/`
-        + encodeGitHubPath(filePath);
-    let existingFile = null;
-
-    try {
-        existingFile = await githubApiRequest(
-            `${contentsPath}?ref=${encodeURIComponent(repository.defaultBranch)}`
-        );
-    } catch (error) {
-        if (error.status !== 404) {
-            throw error;
-        }
-    }
-
-    const requestBody = {
-        message: getCommitSubject(data.problem),
-        content: encodeUtf8Base64(data.submission.code),
-        branch: repository.defaultBranch
-    };
-
-    if (existingFile?.sha) {
-        requestBody.sha = existingFile.sha;
-    }
-
-    const result = await githubApiRequest(contentsPath, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody)
-    });
+    const solutionResult = await upsertGitHubFile(
+        repository,
+        filePath,
+        data.submission.code,
+        getCommitSubject(data.problem)
+    );
+    const solutions = await getProblemSolutions(
+        repository,
+        folder,
+        data.submission.language
+    );
+    const readmeResults = await updateRepositoryReadmes(
+        repository,
+        data,
+        folder,
+        solutions
+    );
+    const commitUrl = readmeResults.rootResult.commitUrl
+        ?? readmeResults.problemResult.commitUrl
+        ?? solutionResult.commitUrl;
     const syncResult = {
         ok: true,
         repository: repository.fullName,
         path: filePath,
-        commitUrl: result.commit?.html_url ?? null,
+        commitUrl,
         fingerprint,
+        formatVersion: REPOSITORY_FORMAT_VERSION,
+        updatedPaths: [
+            filePath,
+            readmeResults.problemReadmePath,
+            ROOT_README_PATH
+        ],
         syncedAt: new Date().toISOString()
     };
 
@@ -253,6 +472,18 @@ async function syncAcceptedSolutionToGitHub(data) {
     });
 
     return syncResult;
+}
+
+let githubSyncQueue = Promise.resolve();
+
+function syncAcceptedSolutionToGitHub(data) {
+    const sync = githubSyncQueue.then(() => (
+        performAcceptedSolutionSync(data)
+    ));
+
+    githubSyncQueue = sync.catch(() => {});
+
+    return sync;
 }
 
 async function recordGitHubSyncFailure(error) {
