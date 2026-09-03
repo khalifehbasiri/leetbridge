@@ -6,7 +6,7 @@ LeetBridge is a privacy-conscious Chrome extension that detects accepted
 LeetCode submissions and saves the submitted source code to a GitHub
 repository selected by the user.
 
-> Chrome Web Store release in preparation.
+[Install LeetBridge from the Chrome Web Store](https://chromewebstore.google.com/detail/gbaehcgejpbkdpmihkhapjkinclpajko)
 
 ## Features
 
