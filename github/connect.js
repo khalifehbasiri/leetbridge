@@ -8,6 +8,12 @@ const devicePanel = document.getElementById("device-panel");
 const repositoryPanel = document.getElementById("repository-panel");
 const connectedPanel = document.getElementById("connected-panel");
 const repositorySelect = document.getElementById("repository-select");
+const authenticateButton = document.getElementById("authenticate-button");
+
+const GITHUB_ORIGINS = [
+    "https://github.com/*",
+    "https://api.github.com/*"
+];
 
 function showMessage(message, isError = false) {
     messageElement.textContent = message;
@@ -27,6 +33,9 @@ function showOnly(panel) {
 }
 
 async function loadConnectionStatus() {
+    const hasGitHubAccess = await chrome.permissions.contains({
+        origins: GITHUB_ORIGINS
+    });
     const response = await chrome.runtime.sendMessage({
         type: "GITHUB_GET_STATUS"
     });
@@ -43,6 +52,17 @@ async function loadConnectionStatus() {
         showMessage("GitHub connection is unavailable in this build.", true);
         return;
     }
+
+    if (!hasGitHubAccess && (status.authenticated || status.repository)) {
+        authenticateButton.textContent = "Allow GitHub access";
+        showOnly(setupPanel);
+        showMessage(
+            "Allow GitHub access again so LeetBridge can reach your selected repository."
+        );
+        return;
+    }
+
+    authenticateButton.textContent = "Connect GitHub";
 
     if (status.repository) {
         document.getElementById("connected-repository").textContent =
@@ -62,6 +82,25 @@ async function loadConnectionStatus() {
 }
 
 async function startAuthentication() {
+    const granted = await chrome.permissions.request({
+        origins: GITHUB_ORIGINS
+    });
+
+    if (!granted) {
+        throw new Error(
+            "GitHub access was not granted. LeetBridge needs it only to connect and sync your selected repository."
+        );
+    }
+
+    const statusResponse = await chrome.runtime.sendMessage({
+        type: "GITHUB_GET_STATUS"
+    });
+
+    if (statusResponse?.ok && statusResponse.status.authenticated) {
+        await loadConnectionStatus();
+        return;
+    }
+
     showMessage("Starting GitHub authentication...");
     const response = await chrome.runtime.sendMessage({
         type: "GITHUB_START_DEVICE_FLOW"
@@ -195,7 +234,7 @@ document.getElementById("install-button").addEventListener("click", async () => 
     }
 });
 
-document.getElementById("authenticate-button").addEventListener("click", () => {
+authenticateButton.addEventListener("click", () => {
     startAuthentication().catch((error) => showMessage(error.message, true));
 });
 
