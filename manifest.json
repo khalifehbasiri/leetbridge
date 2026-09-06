@@ -1,7 +1,7 @@
 {
   "name": "LeetBridge - LeetCode to GitHub Sync",
   "description": "Automatically sync accepted LeetCode solutions to a polished GitHub repository you choose.",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "manifest_version": 3,
   "minimum_chrome_version": "111",
   "incognito": "not_allowed",

@@ -14,9 +14,11 @@ repository selected by the user.
 - Captures the language and exact source code only when the user submits it.
 - Syncs accepted solutions directly from Chrome to GitHub.
 - Prevents duplicate syncs using LeetCode submission IDs.
-- Maintains problem READMEs and a repository-wide solution index.
-- Generates a polished progress card with difficulty and language summaries
-  for the solutions repository.
+- Maintains problem READMEs and a repository-wide, clickable solution archive.
+- Generates matching Progress, Languages, and Difficulty SVG cards without
+  relying on an external statistics service.
+- Builds the solution archive from reusable SVG components while keeping
+  problem and solution-file links clickable.
 - Imports the latest accepted historical solution for each problem and language.
 - Rebuilds the root README from solution folders when recovery is needed.
 - Includes Auto Sync and README update controls in the popup.
@@ -74,6 +76,15 @@ and solution-file links. Content outside the `SOLUTIONS_START` and
 `SOLUTIONS_END` markers is preserved when LeetBridge refreshes the generated
 section.
 
+## Generated repository preview
+
+![A demo GitHub repository showing the LeetBridge progress, language, difficulty, and solution archive cards](docs/images/github-readme-demo.png)
+
+The Progress card jumps to the solution archive, Languages opens the relevant
+repository code, and Difficulty opens the owner's LeetCode profile. Within the
+archive, problem cards open their LeetCode questions and language cards open
+the corresponding source files.
+
 ## User flow
 
 1. Install LeetBridge from the Chrome Web Store.
@@ -130,10 +141,11 @@ resources/    Runtime extension icons and artwork
 
 ## Status
 
-Version 1.0 includes live accepted-submission syncing, repository indexing,
-historical import, recovery tools, and guided onboarding. The LeetCode
-interface can change, so selectors and submission detection are reviewed
-before each store release.
+Version 1.0.3 includes live accepted-submission syncing, the SVG repository
+dashboard and archive, resumable historical import, README conflict recovery,
+repository rebuild tools, and guided onboarding. The LeetCode interface can
+change, so selectors and submission detection are reviewed before each store
+release.
 
 ## License
 
