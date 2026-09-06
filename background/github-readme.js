@@ -3,6 +3,38 @@ const PROFILE_START_MARKER = "<!-- LEETBRIDGE_PROFILE_START -->";
 const PROFILE_END_MARKER = "<!-- LEETBRIDGE_PROFILE_END -->";
 const SOLUTIONS_START_MARKER = "<!-- SOLUTIONS_START -->";
 const SOLUTIONS_END_MARKER = "<!-- SOLUTIONS_END -->";
+const SUMMARY_CARD_PATH = ".leetbridge/summary.svg";
+const LEGACY_DIFFICULTY_CHART_PATH = ".leetbridge/difficulty-chart.svg";
+
+const LANGUAGE_COLORS = Object.freeze({
+    Bash: "#89e051",
+    C: "#a8b9cc",
+    "C#": "#9b4f96",
+    "C++": "#f34b7d",
+    Dart: "#00b4ab",
+    Elixir: "#6e4a7e",
+    Erlang: "#b83998",
+    Go: "#00add8",
+    Java: "#f89820",
+    JavaScript: "#f1e05a",
+    Kotlin: "#a97bff",
+    PHP: "#4f5d95",
+    Python: "#4b8bbe",
+    Ruby: "#cc342d",
+    Rust: "#dea584",
+    Scala: "#dc322f",
+    Swift: "#f05138",
+    TypeScript: "#3178c6"
+});
+
+const FALLBACK_LANGUAGE_COLORS = Object.freeze([
+    "#ff4b91",
+    "#8b5cf6",
+    "#22d3ee",
+    "#fb923c",
+    "#a3e635",
+    "#f472b6"
+]);
 
 function normalizeInlineText(value, fallback) {
     const normalized = String(value ?? "")
@@ -17,6 +49,24 @@ function escapeMarkdownTableText(value) {
     return normalizeInlineText(value, "Unknown")
         .replace(/\\/g, "\\\\")
         .replace(/\|/g, "\\|");
+}
+
+function escapeXmlText(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+}
+
+function unescapeXmlText(value) {
+    return String(value)
+        .replace(/&apos;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/&gt;/g, ">")
+        .replace(/&lt;/g, "<")
+        .replace(/&amp;/g, "&");
 }
 
 function unescapeMarkdownTableText(value) {
@@ -39,8 +89,229 @@ function getDifficultyIcon(difficulty) {
     }[difficulty] ?? "⚪";
 }
 
-function escapeMermaidLabel(value) {
-    return normalizeInlineText(value, "Unknown").replace(/"/g, "'");
+function truncateSvgLabel(value, maxLength = 18) {
+    const label = normalizeInlineText(value, "Unknown");
+
+    return label.length > maxLength
+        ? `${label.slice(0, maxLength - 1)}…`
+        : label;
+}
+
+function getLanguageColor(language, index) {
+    return LANGUAGE_COLORS[language]
+        ?? FALLBACK_LANGUAGE_COLORS[index % FALLBACK_LANGUAGE_COLORS.length];
+}
+
+function summarizeEntries(entries) {
+    const difficultyCounts = entries.reduce((counts, entry) => {
+        if (Object.hasOwn(counts, entry.difficulty)) {
+            counts[entry.difficulty] += 1;
+        }
+
+        return counts;
+    }, { Easy: 0, Medium: 0, Hard: 0 });
+    const languageCounts = entries.reduce((counts, entry) => {
+        for (const solution of entry.solutions) {
+            const language = normalizeInlineText(solution.language, "Unknown");
+            counts.set(language, (counts.get(language) ?? 0) + 1);
+        }
+
+        return counts;
+    }, new Map());
+
+    return {
+        difficultyCounts,
+        languages: [...languageCounts.entries()].sort((first, second) => (
+            second[1] - first[1] || first[0].localeCompare(second[0])
+        ))
+    };
+}
+
+function buildSegmentedBar(segments, total, y) {
+    if (total <= 0) {
+        return "";
+    }
+
+    const barX = 32;
+    const barWidth = 696;
+    let usedWidth = 0;
+
+    return segments.map((segment, index) => {
+        const isLast = index === segments.length - 1;
+        const width = isLast
+            ? barWidth - usedWidth
+            : Math.round((segment.count / total) * barWidth * 10) / 10;
+        const rect = `<rect x="${barX + usedWidth}" y="${y}" `
+            + `width="${Math.max(0, width)}" height="10" `
+            + `fill="${segment.color}"/>`;
+
+        usedWidth += width;
+        return rect;
+    }).join("");
+}
+
+function getDifficultySegments(difficultyCounts, total) {
+    const segments = [
+        { label: "Easy", count: difficultyCounts.Easy, color: "#00b8a3" },
+        { label: "Medium", count: difficultyCounts.Medium, color: "#ffc01e" },
+        { label: "Hard", count: difficultyCounts.Hard, color: "#ef4743" }
+    ].filter((segment) => segment.count > 0);
+    const knownTotal = Object.values(difficultyCounts)
+        .reduce((sum, count) => sum + count, 0);
+
+    if (total > knownTotal) {
+        segments.push({
+            label: "Other",
+            count: total - knownTotal,
+            color: "#8b949e"
+        });
+    }
+
+    return segments;
+}
+
+function getPiePoint(centerX, centerY, radius, angle) {
+    const radians = ((angle - 90) * Math.PI) / 180;
+
+    return {
+        x: centerX + (radius * Math.cos(radians)),
+        y: centerY + (radius * Math.sin(radians))
+    };
+}
+
+function buildPieSlice(centerX, centerY, radius, startAngle, endAngle, color) {
+    if (endAngle - startAngle >= 359.999) {
+        return `<circle cx="${centerX}" cy="${centerY}" r="${radius}" fill="${color}"/>`;
+    }
+
+    const start = getPiePoint(centerX, centerY, radius, startAngle);
+    const end = getPiePoint(centerX, centerY, radius, endAngle);
+    const largeArc = endAngle - startAngle > 180 ? 1 : 0;
+
+    return `<path d="M ${centerX} ${centerY} L ${start.x.toFixed(2)} `
+        + `${start.y.toFixed(2)} A ${radius} ${radius} 0 ${largeArc} 1 `
+        + `${end.x.toFixed(2)} ${end.y.toFixed(2)} Z" fill="${color}"/>`;
+}
+
+function buildSummaryCard(entries) {
+    const { difficultyCounts, languages } = summarizeEntries(entries);
+    const difficultySegments = getDifficultySegments(
+        difficultyCounts,
+        entries.length
+    );
+    const totalSolutions = languages.reduce((total, [, count]) => (
+        total + count
+    ), 0);
+    const languageSegments = languages.map(([language, count], index) => ({
+        count,
+        color: getLanguageColor(language, index)
+    }));
+    const visibleLanguages = languages.slice(0, 6);
+    const languageLegend = visibleLanguages.map(([language, count], index) => {
+        const column = index % 3;
+        const row = Math.floor(index / 3);
+        const x = 32 + (column * 232);
+        const y = 248 + (row * 30);
+        const color = getLanguageColor(language, index);
+        const label = escapeXmlText(truncateSvgLabel(language));
+
+        return [
+            `<circle cx="${x + 6}" cy="${y - 5}" r="6" fill="${color}"/>`,
+            `<text x="${x + 20}" y="${y}" class="legend">${label}</text>`,
+            `<text x="${x + 212}" y="${y}" class="legend-count" `
+                + `text-anchor="end">${count}</text>`
+        ].join("");
+    }).join("");
+    const moreLanguages = languages.length > visibleLanguages.length
+        ? ` + ${languages.length - visibleLanguages.length} more`
+        : "";
+    let currentAngle = 0;
+    const pieSlices = entries.length === 0
+        ? "<circle cx=\"160\" cy=\"458\" r=\"78\" fill=\"#262438\"/>"
+        : difficultySegments.map((segment) => {
+            const nextAngle = currentAngle
+                + ((segment.count / entries.length) * 360);
+            const slice = buildPieSlice(
+                160,
+                458,
+                78,
+                currentAngle,
+                nextAngle,
+                segment.color
+            );
+
+            currentAngle = nextAngle;
+            return slice;
+        }).join("");
+    const difficultyLegend = difficultySegments.map((segment, index) => {
+        const percentage = entries.length === 0
+            ? 0
+            : Math.round((segment.count / entries.length) * 100);
+        const y = 414 + (index * 42);
+
+        return [
+            `<circle cx="334" cy="${y - 5}" r="7" fill="${segment.color}"/>`,
+            `<text x="352" y="${y}" class="difficulty-label">${segment.label}</text>`,
+            `<text x="704" y="${y}" class="difficulty-share" `
+                + `text-anchor="end">${percentage}%</text>`
+        ].join("");
+    }).join("");
+    const problemLabel = entries.length === 1 ? "problem" : "problems";
+    const accessibleTitle = escapeXmlText(
+        `${entries.length} ${problemLabel} solved: `
+        + `${difficultyCounts.Easy} easy, `
+        + `${difficultyCounts.Medium} medium, `
+        + `${difficultyCounts.Hard} hard`
+    );
+
+    return [
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"760\" height=\"570\" viewBox=\"0 0 760 570\" role=\"img\" aria-labelledby=\"title desc\">",
+        `<title id="title">${accessibleTitle}</title>`,
+        `<desc id="desc">LeetBridge progress, language summary, and difficulty pie chart${escapeXmlText(moreLanguages)}</desc>`,
+        "<defs>",
+        "<linearGradient id=\"accent\" x1=\"0\" x2=\"1\"><stop stop-color=\"#ff2e88\"/><stop offset=\"1\" stop-color=\"#8b5cf6\"/></linearGradient>",
+        "<clipPath id=\"language-bar\"><rect x=\"32\" y=\"208\" width=\"696\" height=\"10\" rx=\"5\"/></clipPath>",
+        "<style>",
+        ".heading{font:600 22px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#ff4b91}",
+        ".eyebrow{font:600 11px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:1.2px;fill:#8b949e}",
+        ".total{font:700 44px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#f0f6fc}",
+        ".metric{font:700 25px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#f0f6fc}",
+        ".label{font:500 13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#b7c0ca}",
+        ".legend{font:500 13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#dbe4ee}",
+        ".legend-count{font:600 13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#8b949e}",
+        ".difficulty-label{font:600 15px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#dbe4ee}",
+        ".difficulty-share{font:600 15px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#b7c0ca}",
+        "</style>",
+        "</defs>",
+        "<rect x=\"1\" y=\"1\" width=\"758\" height=\"568\" rx=\"12\" fill=\"#141321\" stroke=\"#30363d\"/>",
+        "<rect x=\"1\" y=\"1\" width=\"758\" height=\"4\" rx=\"2\" fill=\"url(#accent)\"/>",
+        "<text x=\"32\" y=\"45\" class=\"heading\">LeetBridge Progress</text>",
+        "<text x=\"32\" y=\"83\" class=\"eyebrow\">PROBLEMS SOLVED</text>",
+        `<text x="32" y="132" class="total">${entries.length}</text>`,
+        "<line x1=\"242\" y1=\"72\" x2=\"242\" y2=\"143\" stroke=\"#30363d\"/>",
+        "<text x=\"284\" y=\"83\" class=\"eyebrow\">EASY</text>",
+        `<text x="284" y="120" class="metric">${difficultyCounts.Easy}</text>`,
+        "<circle cx=\"410\" cy=\"112\" r=\"5\" fill=\"#00b8a3\"/>",
+        "<text x=\"440\" y=\"83\" class=\"eyebrow\">MEDIUM</text>",
+        `<text x="440" y="120" class="metric">${difficultyCounts.Medium}</text>`,
+        "<circle cx=\"566\" cy=\"112\" r=\"5\" fill=\"#ffc01e\"/>",
+        "<text x=\"596\" y=\"83\" class=\"eyebrow\">HARD</text>",
+        `<text x="596" y="120" class="metric">${difficultyCounts.Hard}</text>`,
+        "<circle cx=\"722\" cy=\"112\" r=\"5\" fill=\"#ef4743\"/>",
+        "<text x=\"32\" y=\"190\" class=\"eyebrow\">SOLUTION LANGUAGES</text>",
+        `<text x="728" y="190" class="label" text-anchor="end">${totalSolutions} files${escapeXmlText(moreLanguages)}</text>`,
+        "<rect x=\"32\" y=\"208\" width=\"696\" height=\"10\" rx=\"5\" fill=\"#262438\"/>",
+        `<g clip-path="url(#language-bar)">${buildSegmentedBar(languageSegments, totalSolutions, 208)}</g>`,
+        languageLegend,
+        "<line x1=\"32\" y1=\"326\" x2=\"728\" y2=\"326\" stroke=\"#30363d\"/>",
+        "<text x=\"32\" y=\"365\" class=\"heading\">Difficulty Mix</text>",
+        "<text x=\"334\" y=\"380\" class=\"eyebrow\">DIFFICULTY</text>",
+        "<text x=\"704\" y=\"380\" class=\"eyebrow\" text-anchor=\"end\">SHARE</text>",
+        pieSlices,
+        difficultyLegend,
+        "</svg>",
+        ""
+    ].join("\n");
 }
 
 function buildProblemReadme(problem, solutions) {
@@ -124,41 +395,79 @@ function parseRootReadmeEntries(readme) {
     const entries = [];
 
     for (const line of generatedSection.split(/\r?\n/)) {
+        const htmlProblemMatch = line.match(
+            /^<tr><td><a href="https:\/\/leetcode\.com\/problems\/([a-z0-9-]+)\/"><strong>(\d+)\s+·\s+(.+)<\/strong><\/a><\/td><td>[^<]*<strong>([^<]+)<\/strong><\/td><td>(.*)<\/td><\/tr>$/
+        );
+
+        if (htmlProblemMatch) {
+            const solutions = [];
+            const solutionPattern = /<a href="([^"]+)">([^<]+)<\/a>/g;
+            let solutionMatch = solutionPattern.exec(htmlProblemMatch[5]);
+
+            while (solutionMatch) {
+                solutions.push({
+                    language: unescapeXmlText(solutionMatch[2]),
+                    path: unescapeXmlText(solutionMatch[1])
+                });
+                solutionMatch = solutionPattern.exec(htmlProblemMatch[5]);
+            }
+
+            entries.push({
+                number: Number(htmlProblemMatch[2]),
+                slug: htmlProblemMatch[1],
+                title: unescapeXmlText(htmlProblemMatch[3]),
+                difficulty: normalizeDifficulty(htmlProblemMatch[4]),
+                solutions
+            });
+            continue;
+        }
+
         if (!line.startsWith("| [") || !line.endsWith("|")) {
             continue;
         }
 
         const cells = splitMarkdownTableRow(line);
 
-        if (cells.length !== 4) {
+        const isCompactRow = cells.length === 3;
+
+        if (!isCompactRow && cells.length !== 4) {
             continue;
         }
 
-        const problemMatch = cells[0].match(
-            /^\[(\d+)\]\(https:\/\/leetcode\.com\/problems\/([a-z0-9-]+)\/\)$/
-        );
+        const problemMatch = isCompactRow
+            ? cells[0].match(
+                /^\[(\d+)\s+·\s+(.+)\]\(https:\/\/leetcode\.com\/problems\/([a-z0-9-]+)\/\)$/
+            )
+            : cells[0].match(
+                /^\[(\d+)\]\(https:\/\/leetcode\.com\/problems\/([a-z0-9-]+)\/\)$/
+            );
 
         if (!problemMatch) {
             continue;
         }
 
+        const solutionCell = isCompactRow ? cells[2] : cells[3];
         const solutions = [];
         const solutionPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
-        let solutionMatch = solutionPattern.exec(cells[3]);
+        let solutionMatch = solutionPattern.exec(solutionCell);
 
         while (solutionMatch) {
             solutions.push({
                 language: unescapeMarkdownTableText(solutionMatch[1]),
                 path: solutionMatch[2]
             });
-            solutionMatch = solutionPattern.exec(cells[3]);
+            solutionMatch = solutionPattern.exec(solutionCell);
         }
 
         entries.push({
             number: Number(problemMatch[1]),
-            slug: problemMatch[2],
-            title: unescapeMarkdownTableText(cells[1]),
-            difficulty: normalizeDifficulty(cells[2]),
+            slug: isCompactRow ? problemMatch[3] : problemMatch[2],
+            title: unescapeMarkdownTableText(
+                isCompactRow ? problemMatch[2] : cells[1]
+            ),
+            difficulty: normalizeDifficulty(
+                isCompactRow ? cells[1] : cells[2]
+            ),
             solutions
         });
     }
@@ -200,84 +509,45 @@ function mergeProblemEntry(entries, problem, solutions) {
 }
 
 function buildRootReadmeSection(entries) {
-    const difficultyCounts = entries.reduce((counts, entry) => {
-        if (Object.hasOwn(counts, entry.difficulty)) {
-            counts[entry.difficulty] += 1;
-        }
-
-        return counts;
-    }, { Easy: 0, Medium: 0, Hard: 0 });
-    const languageCounts = entries.reduce((counts, entry) => {
-        for (const solution of entry.solutions) {
-            const language = normalizeInlineText(solution.language, "Unknown");
-            counts.set(language, (counts.get(language) ?? 0) + 1);
-        }
-
-        return counts;
-    }, new Map());
-    const difficultyChart = Object.entries(difficultyCounts)
-        .filter(([, count]) => count > 0)
-        .map(([difficulty, count]) => (
-            `    "${escapeMermaidLabel(difficulty)}" : ${count}`
-        ));
-    const languageRows = [...languageCounts.entries()]
-        .sort((first, second) => (
-            second[1] - first[1] || first[0].localeCompare(second[0])
-        ))
-        .map(([language, count]) => (
-            `| ${escapeMarkdownTableText(language)} | ${count} |`
-        ));
+    const { difficultyCounts } = summarizeEntries(entries);
     const solutionRows = entries.map((entry) => {
         const number = entry.number
             ? String(entry.number).padStart(4, "0")
             : "N/A";
         const solutions = entry.solutions.map((solution) => (
-            `[${escapeMarkdownTableText(solution.language)}](${solution.path})`
-        )).join("<br>");
+            `<a href="${escapeXmlText(solution.path)}">`
+            + `${escapeXmlText(solution.language)}</a>`
+        )).join("&nbsp; · &nbsp;");
 
-        return `| [${number}](https://leetcode.com/problems/${entry.slug}/) `
-            + `| ${escapeMarkdownTableText(entry.title)} `
-            + `| ${getDifficultyIcon(entry.difficulty)} `
-            + `${escapeMarkdownTableText(entry.difficulty)} `
-            + `| ${solutions || "None"} |`;
+        return `<tr><td><a href="https://leetcode.com/problems/${entry.slug}/">`
+            + `<strong>${number} · ${escapeXmlText(entry.title)}</strong></a>`
+            + `</td><td>${getDifficultyIcon(entry.difficulty)} `
+            + `<strong>${escapeXmlText(entry.difficulty)}</strong></td>`
+            + `<td>${solutions || "None"}</td></tr>`;
     });
     const problemLabel = entries.length === 1 ? "problem" : "problems";
 
     return [
         SOLUTIONS_START_MARKER,
         "",
-        "## Progress",
+        "<p align=\"center\">",
+        `  <img src="${SUMMARY_CARD_PATH}" alt="${entries.length} solved: `
+            + `${difficultyCounts.Easy} Easy, `
+            + `${difficultyCounts.Medium} Medium, `
+            + `${difficultyCounts.Hard} Hard" width="760">`,
+        "</p>",
         "",
-        `**${entries.length} ${problemLabel} solved**`,
-        "",
-        "| Total | 🟢 Easy | 🟡 Medium | 🔴 Hard |",
-        "| ---: | ---: | ---: | ---: |",
-        `| ${entries.length} | ${difficultyCounts.Easy} `
-            + `| ${difficultyCounts.Medium} | ${difficultyCounts.Hard} |`,
-        "",
-        ...(difficultyChart.length > 0 ? [
-            "### Difficulty breakdown",
-            "",
-            "```mermaid",
-            "pie showData",
-            "    title Solved problems by difficulty",
-            ...difficultyChart,
-            "```",
-            ""
-        ] : []),
-        ...(languageRows.length > 0 ? [
-            "### Languages",
-            "",
-            "| Language | Solutions |",
-            "| --- | ---: |",
-            ...languageRows,
-            ""
-        ] : []),
-        "## Solutions",
-        "",
-        "| # | Title | Difficulty | Solution |",
-        "| ---: | --- | --- | --- |",
+        "<table width=\"100%\">",
+        "<thead>",
+        `<tr><th align="left" colspan="3"><strong>Solution Archive</strong>`
+            + `<br><sub>${entries.length} accepted ${problemLabel} synced by `
+            + "LeetBridge</sub></th></tr>",
+        "<tr><th align=\"left\">Problem</th><th align=\"left\">Difficulty</th><th align=\"left\">Solutions</th></tr>",
+        "</thead>",
+        "<tbody>",
         ...solutionRows,
+        "</tbody>",
+        "</table>",
         "",
         SOLUTIONS_END_MARKER
     ].join("\n");

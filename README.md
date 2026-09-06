@@ -15,8 +15,8 @@ repository selected by the user.
 - Syncs accepted solutions directly from Chrome to GitHub.
 - Prevents duplicate syncs using LeetCode submission IDs.
 - Maintains problem READMEs and a repository-wide solution index.
-- Generates a difficulty chart and language summary for the solutions
-  repository.
+- Generates a polished progress card with difficulty and language summaries
+  for the solutions repository.
 - Imports the latest accepted historical solution for each problem and language.
 - Rebuilds the root README from solution folders when recovery is needed.
 - Includes Auto Sync and README update controls in the popup.
@@ -44,14 +44,19 @@ Example output:
 
 ```text
 README.md
+.leetbridge/
+└── summary.svg
 0001-two-sum/
 ├── README.md
 └── solution.py
 ```
 
-The repository README tracks progress and links every synced solution. Content
-outside the `SOLUTIONS_START` and `SOLUTIONS_END` markers is preserved when
-LeetBridge refreshes the generated section.
+The repository README displays one generated progress card containing language
+and difficulty visuals, followed by a clickable solution archive. The card is
+stored in `.leetbridge/summary.svg` in the solutions repository, so it does not
+depend on an external stats service. Content outside the `SOLUTIONS_START` and
+`SOLUTIONS_END` markers is preserved when LeetBridge refreshes the generated
+section.
 
 ## User flow
 

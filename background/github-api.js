@@ -72,10 +72,7 @@ async function selectGitHubRepository(repositoryId, installationId) {
     const current = await chrome.storage.local.get("leetBridgeCurrent");
     const currentData = current.leetBridgeCurrent;
     const initialization = await queueGitHubOperation(() => (
-        initializeGitHubRepository(
-            selected,
-            currentData?.username ?? null
-        )
+        initializeGitHubRepository(selected)
     ));
 
     await chrome.storage.local.set({
@@ -143,11 +140,8 @@ async function getGitHubConnectionStatus() {
 
     if (authenticated && stored[GITHUB_REPOSITORY_KEY] && !repositoryState) {
         try {
-            const current = await chrome.storage.local.get("leetBridgeCurrent");
-
             await queueGitHubOperation(() => initializeGitHubRepository(
-                stored[GITHUB_REPOSITORY_KEY],
-                current.leetBridgeCurrent?.username ?? null
+                stored[GITHUB_REPOSITORY_KEY]
             ));
             repositoryState = {
                 repository: stored[GITHUB_REPOSITORY_KEY].fullName,
@@ -348,6 +342,50 @@ async function upsertGitHubFile(repository, path, content, message) {
     };
 }
 
+async function deleteGitHubFileIfExists(repository, path, message) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        const existingFile = await getGitHubContent(repository, path);
+
+        if (existingFile === null) {
+            return { changed: false, commitUrl: null };
+        }
+
+        if (Array.isArray(existingFile)) {
+            throw new Error(`${path} is a directory, not a file`);
+        }
+
+        try {
+            const result = await githubApiRequest(
+                getRepositoryContentsPath(repository, path),
+                {
+                    method: "DELETE",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        message,
+                        sha: existingFile.sha,
+                        branch: repository.defaultBranch
+                    })
+                }
+            );
+
+            return {
+                changed: true,
+                commitUrl: result.commit?.html_url ?? null
+            };
+        } catch (error) {
+            if (error?.status === 404) {
+                return { changed: false, commitUrl: null };
+            }
+
+            if (!isGitHubContentsConflict(error) || attempt === 2) {
+                throw error;
+            }
+        }
+    }
+
+    throw new Error(`Could not remove obsolete generated file: ${path}`);
+}
+
 async function listGitHubDirectory(repository, path) {
     const contents = await getGitHubContent(repository, path);
 
@@ -444,21 +482,89 @@ async function getGitHubTextFile(repository, path) {
     return decodeUtf8Base64(file.content);
 }
 
-async function initializeGitHubRepository(repository, leetcodeUsername) {
+function isGitHubContentsConflict(error) {
+    return error?.status === 409 || /does not match/i.test(error?.message ?? "");
+}
+
+async function upsertRootReadmeWithRetry(
+    repository,
+    existingReadme,
+    entries,
+    message
+) {
+    let sourceReadme = existingReadme;
+    const generatedSection = buildRootReadmeSection(entries);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            return await upsertGitHubFile(
+                repository,
+                ROOT_README_PATH,
+                updateRootReadme(sourceReadme, generatedSection),
+                message
+            );
+        } catch (error) {
+            if (!isGitHubContentsConflict(error) || attempt === 2) {
+                throw error;
+            }
+
+            sourceReadme = await getGitHubTextFile(
+                repository,
+                ROOT_README_PATH
+            ) ?? "";
+        }
+    }
+
+    throw new Error("Could not update the repository README");
+}
+
+async function upsertRepositoryIndex(
+    repository,
+    existingReadme,
+    entries,
+    message
+) {
+    const summaryResult = await upsertGitHubFile(
+        repository,
+        SUMMARY_CARD_PATH,
+        buildSummaryCard(entries),
+        "Update LeetCode progress card"
+    );
+    const readmeResult = await upsertRootReadmeWithRetry(
+        repository,
+        existingReadme,
+        entries,
+        message
+    );
+    const legacyChartResult = await deleteGitHubFileIfExists(
+        repository,
+        LEGACY_DIFFICULTY_CHART_PATH,
+        "Remove obsolete standalone difficulty chart"
+    );
+
+    return {
+        changed: summaryResult.changed
+            || legacyChartResult.changed
+            || readmeResult.changed,
+        commitUrl: readmeResult.commitUrl
+            ?? legacyChartResult.commitUrl
+            ?? summaryResult.commitUrl,
+        summaryResult,
+        legacyChartResult,
+        readmeResult
+    };
+}
+
+async function initializeGitHubRepository(repository) {
     const existingReadme = await getGitHubTextFile(
         repository,
         ROOT_README_PATH
     ) ?? "";
     const existingEntries = parseRootReadmeEntries(existingReadme);
-    const nextReadme = updateRootReadme(
-        existingReadme,
-        buildRootReadmeSection(existingEntries),
-        leetcodeUsername
-    );
-    const result = await upsertGitHubFile(
+    const result = await upsertRepositoryIndex(
         repository,
-        ROOT_README_PATH,
-        nextReadme,
+        existingReadme,
+        existingEntries,
         "Initialize LeetBridge repository"
     );
 
@@ -506,16 +612,10 @@ async function updateRepositoryReadmes(
             data.problem,
             solutions
         );
-        const nextRootReadme = updateRootReadme(
-            existingRootReadme,
-            buildRootReadmeSection(entries),
-            data.username
-        );
-
-        result.rootResult = await upsertGitHubFile(
+        result.rootResult = await upsertRepositoryIndex(
             repository,
-            ROOT_README_PATH,
-            nextRootReadme,
+            existingRootReadme,
+            entries,
             "Update LeetCode solutions index"
         );
     }
@@ -573,7 +673,7 @@ async function readProblemDirectoryEntry(repository, directory) {
     };
 }
 
-async function rebuildRepositoryReadme(repository, leetcodeUsername = null) {
+async function rebuildRepositoryReadme(repository) {
     const rootItems = await listGitHubDirectory(repository, "");
     const directories = rootItems.filter((item) => (
         item.type === "dir"
@@ -590,15 +690,10 @@ async function rebuildRepositoryReadme(repository, leetcodeUsername = null) {
         repository,
         ROOT_README_PATH
     ) ?? "";
-    const nextReadme = updateRootReadme(
-        existingReadme,
-        buildRootReadmeSection(entries),
-        leetcodeUsername
-    );
-    const result = await upsertGitHubFile(
+    const result = await upsertRepositoryIndex(
         repository,
-        ROOT_README_PATH,
-        nextReadme,
+        existingReadme,
+        entries,
         "Rebuild LeetCode solutions index"
     );
 
@@ -738,6 +833,7 @@ async function performAcceptedSolutionSync(data, options) {
     }
 
     if (options.updateRootReadme) {
+        syncResult.updatedPaths.push(SUMMARY_CARD_PATH);
         syncResult.updatedPaths.push(ROOT_README_PATH);
     }
 
