@@ -72,7 +72,7 @@ async function selectGitHubRepository(repositoryId, installationId) {
     const current = await chrome.storage.local.get("leetBridgeCurrent");
     const currentData = current.leetBridgeCurrent;
     const initialization = await queueGitHubOperation(() => (
-        initializeGitHubRepository(selected)
+        initializeGitHubRepository(selected, currentData?.username ?? null)
     ));
 
     await chrome.storage.local.set({
@@ -112,7 +112,8 @@ async function getGitHubConnectionStatus() {
         GITHUB_REPOSITORY_KEY,
         GITHUB_LAST_SYNC_KEY,
         GITHUB_PROFILE_KEY,
-        GITHUB_REPOSITORY_STATE_KEY
+        GITHUB_REPOSITORY_STATE_KEY,
+        "leetBridgeCurrent"
     ]);
     const authenticated = Boolean(stored[GITHUB_AUTH_KEY]?.accessToken);
     const lastSync = stored[GITHUB_LAST_SYNC_KEY];
@@ -141,7 +142,8 @@ async function getGitHubConnectionStatus() {
     if (authenticated && stored[GITHUB_REPOSITORY_KEY] && !repositoryState) {
         try {
             await queueGitHubOperation(() => initializeGitHubRepository(
-                stored[GITHUB_REPOSITORY_KEY]
+                stored[GITHUB_REPOSITORY_KEY],
+                stored.leetBridgeCurrent?.username ?? null
             ));
             repositoryState = {
                 repository: stored[GITHUB_REPOSITORY_KEY].fullName,
@@ -490,10 +492,15 @@ async function upsertRootReadmeWithRetry(
     repository,
     existingReadme,
     entries,
-    message
+    message,
+    leetcodeUsername = null
 ) {
     let sourceReadme = existingReadme;
-    const generatedSection = buildRootReadmeSection(entries);
+    const generatedSection = buildRootReadmeSection(
+        entries,
+        repository,
+        leetcodeUsername
+    );
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
@@ -518,23 +525,115 @@ async function upsertRootReadmeWithRetry(
     throw new Error("Could not update the repository README");
 }
 
+async function upsertArchiveCardAssets(
+    repository,
+    entries,
+    problemCardEntries = entries
+) {
+    const results = [];
+    const appendResult = async (path, content, message) => {
+        const result = await upsertGitHubFile(
+            repository,
+            path,
+            content,
+            message
+        );
+
+        results.push({ path, ...result });
+    };
+
+    await appendResult(
+        ARCHIVE_HEADER_CARD_PATH,
+        buildArchiveHeaderCard(entries),
+        "Update solution archive header"
+    );
+
+    for (const difficulty of ["Easy", "Medium", "Hard"]) {
+        await appendResult(
+            getArchiveDifficultyCardPath(difficulty),
+            buildArchiveDifficultyCard(difficulty),
+            `Update ${difficulty} archive badge`
+        );
+    }
+
+    const { languages } = summarizeEntries(entries);
+
+    for (const [language] of languages) {
+        await appendResult(
+            getArchiveLanguageCardPath(language),
+            buildArchiveLanguageCard(language),
+            `Update ${normalizeInlineText(language, "Unknown")} archive badge`
+        );
+    }
+
+    const uniqueProblemEntries = [...new Map(problemCardEntries.map((entry) => (
+        [entry.slug, entry]
+    ))).values()];
+
+    for (const entry of uniqueProblemEntries) {
+        await appendResult(
+            getArchiveProblemCardPath(entry),
+            buildArchiveProblemCard(entry),
+            `Update archive badge for ${normalizeInlineText(
+                entry.title,
+                entry.slug
+            )}`
+        );
+    }
+
+    return {
+        changed: results.some((result) => result.changed),
+        commitUrl: results.findLast((result) => result.commitUrl)
+            ?.commitUrl ?? null,
+        results
+    };
+}
+
 async function upsertRepositoryIndex(
     repository,
     existingReadme,
     entries,
-    message
+    message,
+    leetcodeUsername = null,
+    problemCardEntries = entries
 ) {
-    const summaryResult = await upsertGitHubFile(
+    const progressResult = await upsertGitHubFile(
         repository,
-        SUMMARY_CARD_PATH,
-        buildSummaryCard(entries),
+        PROGRESS_CARD_PATH,
+        buildProgressCard(entries),
         "Update LeetCode progress card"
+    );
+    const languagesResult = await upsertGitHubFile(
+        repository,
+        LANGUAGES_CARD_PATH,
+        buildLanguagesCard(entries),
+        "Update LeetCode languages card"
+    );
+    const difficultyResult = await upsertGitHubFile(
+        repository,
+        DIFFICULTY_CARD_PATH,
+        buildDifficultyCard(entries),
+        "Update LeetCode difficulty card"
+    );
+    const archiveProblemEntries = existingReadme.includes(
+        ARCHIVE_CELL_VERSION_MARKER
+    ) ? problemCardEntries : entries;
+    const archiveAssetsResult = await upsertArchiveCardAssets(
+        repository,
+        entries,
+        archiveProblemEntries
     );
     const readmeResult = await upsertRootReadmeWithRetry(
         repository,
         existingReadme,
         entries,
-        message
+        message,
+        leetcodeUsername
+    );
+    const legacySummaryResult = await deleteGitHubFileIfExists(
+        repository,
+        LEGACY_SUMMARY_CARD_PATH,
+        "Remove obsolete combined progress card"
     );
     const legacyChartResult = await deleteGitHubFileIfExists(
         repository,
@@ -543,19 +642,32 @@ async function upsertRepositoryIndex(
     );
 
     return {
-        changed: summaryResult.changed
+        changed: progressResult.changed
+            || languagesResult.changed
+            || difficultyResult.changed
+            || archiveAssetsResult.changed
+            || legacySummaryResult.changed
             || legacyChartResult.changed
             || readmeResult.changed,
         commitUrl: readmeResult.commitUrl
+            ?? difficultyResult.commitUrl
+            ?? languagesResult.commitUrl
+            ?? progressResult.commitUrl
+            ?? archiveAssetsResult.commitUrl
+            ?? legacySummaryResult.commitUrl
             ?? legacyChartResult.commitUrl
-            ?? summaryResult.commitUrl,
-        summaryResult,
+            ?? null,
+        progressResult,
+        languagesResult,
+        difficultyResult,
+        archiveAssetsResult,
+        legacySummaryResult,
         legacyChartResult,
         readmeResult
     };
 }
 
-async function initializeGitHubRepository(repository) {
+async function initializeGitHubRepository(repository, leetcodeUsername = null) {
     const existingReadme = await getGitHubTextFile(
         repository,
         ROOT_README_PATH
@@ -565,7 +677,8 @@ async function initializeGitHubRepository(repository) {
         repository,
         existingReadme,
         existingEntries,
-        "Initialize LeetBridge repository"
+        "Initialize LeetBridge repository",
+        leetcodeUsername
     );
 
     return {
@@ -616,7 +729,9 @@ async function updateRepositoryReadmes(
             repository,
             existingRootReadme,
             entries,
-            "Update LeetCode solutions index"
+            "Update LeetCode solutions index",
+            data.username ?? null,
+            entries.filter((entry) => entry.slug === data.problem.slug)
         );
     }
 
@@ -673,7 +788,7 @@ async function readProblemDirectoryEntry(repository, directory) {
     };
 }
 
-async function rebuildRepositoryReadme(repository) {
+async function rebuildRepositoryReadme(repository, leetcodeUsername = null) {
     const rootItems = await listGitHubDirectory(repository, "");
     const directories = rootItems.filter((item) => (
         item.type === "dir"
@@ -694,7 +809,8 @@ async function rebuildRepositoryReadme(repository) {
         repository,
         existingReadme,
         entries,
-        "Rebuild LeetCode solutions index"
+        "Rebuild LeetCode solutions index",
+        leetcodeUsername
     );
 
     return {
@@ -833,8 +949,16 @@ async function performAcceptedSolutionSync(data, options) {
     }
 
     if (options.updateRootReadme) {
-        syncResult.updatedPaths.push(SUMMARY_CARD_PATH);
+        syncResult.updatedPaths.push(PROGRESS_CARD_PATH);
+        syncResult.updatedPaths.push(LANGUAGES_CARD_PATH);
+        syncResult.updatedPaths.push(DIFFICULTY_CARD_PATH);
+        syncResult.updatedPaths.push(
+            ...(
+                readmeResults.rootResult?.archiveAssetsResult?.results ?? []
+            ).map((result) => result.path)
+        );
         syncResult.updatedPaths.push(ROOT_README_PATH);
+        syncResult.updatedPaths = [...new Set(syncResult.updatedPaths)];
     }
 
     await chrome.storage.local.set({

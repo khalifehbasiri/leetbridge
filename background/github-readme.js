@@ -3,7 +3,20 @@ const PROFILE_START_MARKER = "<!-- LEETBRIDGE_PROFILE_START -->";
 const PROFILE_END_MARKER = "<!-- LEETBRIDGE_PROFILE_END -->";
 const SOLUTIONS_START_MARKER = "<!-- SOLUTIONS_START -->";
 const SOLUTIONS_END_MARKER = "<!-- SOLUTIONS_END -->";
-const SUMMARY_CARD_PATH = ".leetbridge/summary.svg";
+const ARCHIVE_CELL_VERSION_MARKER = "<!-- LEETBRIDGE_ARCHIVE_CELLS_V3 -->";
+const ARCHIVE_CELL_ASSET_VERSION = 3;
+const PROGRESS_CARD_PATH = ".leetbridge/progress.svg";
+const LANGUAGES_CARD_PATH = ".leetbridge/languages.svg";
+const DIFFICULTY_CARD_PATH = ".leetbridge/difficulty.svg";
+const ARCHIVE_HEADER_CARD_PATH = ".leetbridge/archive/header.svg";
+const ARCHIVE_DIFFICULTY_CARD_PATHS = Object.freeze({
+    Easy: ".leetbridge/archive/difficulties/easy.svg",
+    Medium: ".leetbridge/archive/difficulties/medium.svg",
+    Hard: ".leetbridge/archive/difficulties/hard.svg"
+});
+const ARCHIVE_PROBLEM_CARD_DIRECTORY = ".leetbridge/archive/problems";
+const ARCHIVE_LANGUAGE_CARD_DIRECTORY = ".leetbridge/archive/languages";
+const LEGACY_SUMMARY_CARD_PATH = ".leetbridge/summary.svg";
 const LEGACY_DIFFICULTY_CHART_PATH = ".leetbridge/difficulty-chart.svg";
 
 const LANGUAGE_COLORS = Object.freeze({
@@ -102,6 +115,48 @@ function getLanguageColor(language, index) {
         ?? FALLBACK_LANGUAGE_COLORS[index % FALLBACK_LANGUAGE_COLORS.length];
 }
 
+function getStableAssetKey(value) {
+    const label = normalizeInlineText(value, "unknown");
+    const readable = label.toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 32) || "item";
+    let hash = 2166136261;
+
+    for (const character of label) {
+        hash ^= character.codePointAt(0);
+        hash = Math.imul(hash, 16777619);
+    }
+
+    return `${readable}-${(hash >>> 0).toString(16)}`;
+}
+
+function getArchiveProblemCardPath(entry) {
+    const number = entry.number
+        ? String(entry.number).padStart(4, "0")
+        : "unranked";
+    const slug = String(entry.slug ?? "problem")
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "problem";
+
+    return `${ARCHIVE_PROBLEM_CARD_DIRECTORY}/${number}-${slug}.svg`;
+}
+
+function getArchiveLanguageCardPath(language) {
+    return `${ARCHIVE_LANGUAGE_CARD_DIRECTORY}/`
+        + `${getStableAssetKey(language)}.svg`;
+}
+
+function getArchiveDifficultyCardPath(difficulty) {
+    return ARCHIVE_DIFFICULTY_CARD_PATHS[normalizeDifficulty(difficulty)]
+        ?? `${ARCHIVE_DIFFICULTY_CARD_PATHS.Easy.replace("easy.svg", "other.svg")}`;
+}
+
+function getArchiveAssetSource(path) {
+    return `${path}?v=${ARCHIVE_CELL_ASSET_VERSION}`;
+}
+
 function summarizeEntries(entries) {
     const difficultyCounts = entries.reduce((counts, entry) => {
         if (Object.hasOwn(counts, entry.difficulty)) {
@@ -127,25 +182,23 @@ function summarizeEntries(entries) {
     };
 }
 
-function buildSegmentedBar(segments, total, y) {
+function buildSegmentedBar(segments, total, x, y, width, height = 8) {
     if (total <= 0) {
         return "";
     }
 
-    const barX = 32;
-    const barWidth = 696;
     let usedWidth = 0;
 
     return segments.map((segment, index) => {
         const isLast = index === segments.length - 1;
-        const width = isLast
-            ? barWidth - usedWidth
-            : Math.round((segment.count / total) * barWidth * 10) / 10;
-        const rect = `<rect x="${barX + usedWidth}" y="${y}" `
-            + `width="${Math.max(0, width)}" height="10" `
+        const segmentWidth = isLast
+            ? width - usedWidth
+            : Math.round((segment.count / total) * width * 10) / 10;
+        const rect = `<rect x="${x + usedWidth}" y="${y}" `
+            + `width="${Math.max(0, segmentWidth)}" height="${height}" `
             + `fill="${segment.color}"/>`;
 
-        usedWidth += width;
+        usedWidth += segmentWidth;
         return rect;
     }).join("");
 }
@@ -193,12 +246,152 @@ function buildPieSlice(centerX, centerY, radius, startAngle, endAngle, color) {
         + `${end.x.toFixed(2)} ${end.y.toFixed(2)} Z" fill="${color}"/>`;
 }
 
-function buildSummaryCard(entries) {
-    const { difficultyCounts, languages } = summarizeEntries(entries);
-    const difficultySegments = getDifficultySegments(
-        difficultyCounts,
-        entries.length
+function buildCardSvg(accessibleTitle, description, body) {
+    return [
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"360\" height=\"345\" viewBox=\"0 0 360 345\" role=\"img\" aria-labelledby=\"title desc\">",
+        `<title id="title">${escapeXmlText(accessibleTitle)}</title>`,
+        `<desc id="desc">${escapeXmlText(description)}</desc>`,
+        "<defs>",
+        "<linearGradient id=\"accent\" x1=\"0\" x2=\"1\"><stop stop-color=\"#ff2e88\"/><stop offset=\"1\" stop-color=\"#8b5cf6\"/></linearGradient>",
+        "<clipPath id=\"bar\"><rect x=\"32\" y=\"82\" width=\"296\" height=\"8\" rx=\"4\"/></clipPath>",
+        "<style>",
+        ".heading{font:600 22px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#ff4b91}",
+        ".eyebrow{font:600 10px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:1.2px;fill:#8b949e}",
+        ".total{font:700 52px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#f0f6fc}",
+        ".metric{font:600 15px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#f0f6fc}",
+        ".count{font:700 16px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#f0f6fc}",
+        ".muted{font:500 13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#8b949e}",
+        ".language{font:700 31px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#f0f6fc}",
+        ".link{font:600 14px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#58a6ff}",
+        "</style>",
+        "</defs>",
+        "<rect x=\"1\" y=\"1\" width=\"358\" height=\"343\" rx=\"12\" fill=\"#141321\" stroke=\"#30363d\"/>",
+        "<rect x=\"1\" y=\"1\" width=\"358\" height=\"4\" rx=\"2\" fill=\"url(#accent)\"/>",
+        ...body,
+        "</svg>",
+        ""
+    ].join("\n");
+}
+
+function buildArchiveHeaderCard(entries) {
+    const problemLabel = entries.length === 1 ? "problem" : "problems";
+
+    return [
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1120\" height=\"128\" viewBox=\"0 0 1120 128\" role=\"img\" aria-labelledby=\"title desc\">",
+        "<title id=\"title\">Solution Archive</title>",
+        `<desc id="desc">${entries.length} accepted ${problemLabel} synced by LeetBridge</desc>`,
+        "<defs>",
+        "<linearGradient id=\"accent\" x1=\"0\" x2=\"1\"><stop stop-color=\"#ff2e88\"/><stop offset=\"1\" stop-color=\"#8b5cf6\"/></linearGradient>",
+        "<style>",
+        ".heading{font:600 24px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#ff4b91}",
+        ".subtitle{font:500 14px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#b7c0ca}",
+        ".column{font:600 11px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:1.2px;fill:#8b949e}",
+        "</style>",
+        "</defs>",
+        "<rect x=\"1\" y=\"1\" width=\"1118\" height=\"126\" rx=\"12\" fill=\"#141321\" stroke=\"#30363d\"/>",
+        "<rect x=\"1\" y=\"1\" width=\"1118\" height=\"4\" rx=\"2\" fill=\"url(#accent)\"/>",
+        "<text x=\"32\" y=\"43\" class=\"heading\">Solution Archive</text>",
+        `<text x="1088" y="42" class="subtitle" text-anchor="end">${entries.length} accepted ${problemLabel} synced by LeetBridge</text>`,
+        "<line x1=\"32\" y1=\"70\" x2=\"1088\" y2=\"70\" stroke=\"#30363d\"/>",
+        "<text x=\"32\" y=\"103\" class=\"column\">PROBLEM</text>",
+        "<text x=\"610\" y=\"103\" class=\"column\">DIFFICULTY</text>",
+        "<text x=\"810\" y=\"103\" class=\"column\">SOLUTIONS</text>",
+        "</svg>",
+        ""
+    ].join("\n");
+}
+
+function buildArchiveCellSvg(width, accessibleTitle, body) {
+    return [
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="58" viewBox="0 0 ${width} 58" role="img" aria-labelledby="title">`,
+        `<title id="title">${escapeXmlText(accessibleTitle)}</title>`,
+        "<defs>",
+        "<linearGradient id=\"accent\" x1=\"0\" x2=\"1\"><stop stop-color=\"#ff2e88\"/><stop offset=\"1\" stop-color=\"#8b5cf6\"/></linearGradient>",
+        "<style>",
+        ".label{font:600 15px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#f0f6fc}",
+        ".link{font:600 15px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#58a6ff}",
+        "</style>",
+        "</defs>",
+        `<rect x="1" y="1" width="${width - 2}" height="56" rx="9" fill="#141321" stroke="#30363d"/>`,
+        `<rect x="1" y="1" width="${width - 2}" height="3" rx="1.5" fill="url(#accent)"/>`,
+        ...body,
+        "</svg>",
+        ""
+    ].join("\n");
+}
+
+function buildArchiveProblemCard(entry) {
+    const number = entry.number
+        ? String(entry.number).padStart(4, "0")
+        : "N/A";
+    const title = truncateSvgLabel(entry.title, 46);
+    const label = `${number} · ${title}`;
+
+    return buildArchiveCellSvg(540, label, [
+        `<text x="18" y="36" class="label">${escapeXmlText(label)}</text>`,
+        "<text x=\"516\" y=\"36\" class=\"link\" text-anchor=\"end\">↗</text>"
+    ]);
+}
+
+function buildArchiveDifficultyCard(difficulty) {
+    const normalized = normalizeDifficulty(difficulty);
+    const color = {
+        Easy: "#00b8a3",
+        Medium: "#ffc01e",
+        Hard: "#ef4743"
+    }[normalized] ?? "#8b949e";
+
+    return buildArchiveCellSvg(162, normalized, [
+        `<circle cx="24" cy="30" r="7" fill="${color}"/>`,
+        `<text x="42" y="36" class="label">${escapeXmlText(normalized)}</text>`
+    ]);
+}
+
+function buildArchiveLanguageCard(language) {
+    const normalized = normalizeInlineText(language, "Unknown");
+    const colorIndex = parseInt(getStableAssetKey(normalized).slice(-2), 16);
+    const color = getLanguageColor(normalized, colorIndex);
+
+    return buildArchiveCellSvg(297, normalized, [
+        `<circle cx="24" cy="30" r="7" fill="${color}"/>`,
+        `<text x="42" y="36" class="label">${escapeXmlText(truncateSvgLabel(normalized, 24))}</text>`,
+        "<text x=\"277\" y=\"36\" class=\"link\" text-anchor=\"end\">↗</text>"
+    ]);
+}
+
+function buildProgressCard(entries) {
+    const { difficultyCounts } = summarizeEntries(entries);
+    const problemLabel = entries.length === 1 ? "problem" : "problems";
+    const rows = [
+        { label: "Easy", count: difficultyCounts.Easy, color: "#00b8a3" },
+        { label: "Medium", count: difficultyCounts.Medium, color: "#ffc01e" },
+        { label: "Hard", count: difficultyCounts.Hard, color: "#ef4743" }
+    ].map((item, index) => {
+        const y = 210 + (index * 40);
+
+        return `<circle cx="38" cy="${y - 5}" r="7" fill="${item.color}"/>`
+            + `<text x="54" y="${y}" class="metric">${item.label}</text>`
+            + `<text x="328" y="${y}" class="count" text-anchor="end">`
+            + `${item.count}</text>`;
+    });
+
+    return buildCardSvg(
+        `${entries.length} ${problemLabel} solved`,
+        `${difficultyCounts.Easy} easy, ${difficultyCounts.Medium} medium, `
+            + `${difficultyCounts.Hard} hard. Open the solution archive.`,
+        [
+            "<text x=\"32\" y=\"45\" class=\"heading\">Progress</text>",
+            `<text x="32" y="119" class="total">${entries.length}</text>`,
+            "<text x=\"32\" y=\"145\" class=\"eyebrow\">PROBLEMS SOLVED</text>",
+            "<line x1=\"32\" y1=\"172\" x2=\"328\" y2=\"172\" stroke=\"#30363d\"/>",
+            ...rows,
+            "<text x=\"328\" y=\"326\" class=\"link\" text-anchor=\"end\">Open archive ↗</text>"
+        ]
     );
+}
+
+function buildLanguagesCard(entries) {
+    const { languages } = summarizeEntries(entries);
     const totalSolutions = languages.reduce((total, [, count]) => (
         total + count
     ), 0);
@@ -206,35 +399,67 @@ function buildSummaryCard(entries) {
         count,
         color: getLanguageColor(language, index)
     }));
-    const visibleLanguages = languages.slice(0, 6);
-    const languageLegend = visibleLanguages.map(([language, count], index) => {
-        const column = index % 3;
-        const row = Math.floor(index / 3);
-        const x = 32 + (column * 232);
-        const y = 248 + (row * 30);
-        const color = getLanguageColor(language, index);
-        const label = escapeXmlText(truncateSvgLabel(language));
+    const primaryLanguage = languages[0]?.[0] ?? "No languages yet";
+    const primaryCount = languages[0]?.[1] ?? 0;
+    const browseLabel = languages.length === 0
+        ? "Open archive"
+        : languages.length > 1
+            ? "Browse languages"
+            : `Browse ${truncateSvgLabel(primaryLanguage, 15)}`;
+    const description = languages.length === 0
+        ? "No solution languages have been synced yet."
+        : `${primaryLanguage} is the most-used solution language.`;
+    let content;
 
-        return [
-            `<circle cx="${x + 6}" cy="${y - 5}" r="6" fill="${color}"/>`,
-            `<text x="${x + 20}" y="${y}" class="legend">${label}</text>`,
-            `<text x="${x + 212}" y="${y}" class="legend-count" `
-                + `text-anchor="end">${count}</text>`
-        ].join("");
-    }).join("");
-    const moreLanguages = languages.length > visibleLanguages.length
-        ? ` + ${languages.length - visibleLanguages.length} more`
-        : "";
+    if (languages.length <= 1) {
+        content = [
+            `<circle cx="52" cy="145" r="16" fill="${getLanguageColor(primaryLanguage, 0)}"/>`,
+            `<text x="82" y="155" class="language">${escapeXmlText(truncateSvgLabel(primaryLanguage, 15))}</text>`,
+            `<text x="82" y="188" class="muted">${primaryCount} solution${primaryCount === 1 ? "" : "s"}</text>`
+        ];
+    } else {
+        const languageRows = languages.slice(0, 4).map(([language, count], index) => {
+            const y = 128 + (index * 40);
+
+            return `<circle cx="38" cy="${y - 5}" r="7" fill="${getLanguageColor(language, index)}"/>`
+                + `<text x="54" y="${y}" class="metric">${escapeXmlText(truncateSvgLabel(language, 18))}</text>`
+                + `<text x="328" y="${y}" class="count" text-anchor="end">${count}</text>`;
+        });
+
+        content = [
+            "<rect x=\"32\" y=\"82\" width=\"296\" height=\"8\" rx=\"4\" fill=\"#262438\"/>",
+            `<g clip-path="url(#bar)">${buildSegmentedBar(languageSegments, totalSolutions, 32, 82, 296)}</g>`,
+            ...languageRows,
+            ...(languages.length > 4 ? [
+                `<text x="32" y="296" class="muted">+${languages.length - 4} more</text>`
+            ] : [])
+        ];
+    }
+
+    return buildCardSvg(
+        `${totalSolutions} solutions by language`,
+        description,
+        [
+            "<text x=\"32\" y=\"45\" class=\"heading\">Languages</text>",
+            ...content,
+            `<text x="328" y="326" class="link" text-anchor="end">${escapeXmlText(browseLabel)} ↗</text>`
+        ]
+    );
+}
+
+function buildDifficultyCard(entries) {
+    const { difficultyCounts } = summarizeEntries(entries);
+    const segments = getDifficultySegments(difficultyCounts, entries.length);
     let currentAngle = 0;
-    const pieSlices = entries.length === 0
-        ? "<circle cx=\"160\" cy=\"458\" r=\"78\" fill=\"#262438\"/>"
-        : difficultySegments.map((segment) => {
+    const slices = entries.length === 0
+        ? "<circle cx=\"112\" cy=\"166\" r=\"68\" fill=\"#262438\"/>"
+        : segments.map((segment) => {
             const nextAngle = currentAngle
                 + ((segment.count / entries.length) * 360);
             const slice = buildPieSlice(
-                160,
-                458,
-                78,
+                112,
+                166,
+                68,
                 currentAngle,
                 nextAngle,
                 segment.color
@@ -243,75 +468,30 @@ function buildSummaryCard(entries) {
             currentAngle = nextAngle;
             return slice;
         }).join("");
-    const difficultyLegend = difficultySegments.map((segment, index) => {
+    const legend = segments.map((segment, index) => {
+        const y = 126 + (index * 42);
         const percentage = entries.length === 0
             ? 0
             : Math.round((segment.count / entries.length) * 100);
-        const y = 414 + (index * 42);
 
-        return [
-            `<circle cx="334" cy="${y - 5}" r="7" fill="${segment.color}"/>`,
-            `<text x="352" y="${y}" class="difficulty-label">${segment.label}</text>`,
-            `<text x="704" y="${y}" class="difficulty-share" `
-                + `text-anchor="end">${percentage}%</text>`
-        ].join("");
-    }).join("");
-    const problemLabel = entries.length === 1 ? "problem" : "problems";
-    const accessibleTitle = escapeXmlText(
-        `${entries.length} ${problemLabel} solved: `
-        + `${difficultyCounts.Easy} easy, `
-        + `${difficultyCounts.Medium} medium, `
-        + `${difficultyCounts.Hard} hard`
+        return `<circle cx="216" cy="${y - 5}" r="7" fill="${segment.color}"/>`
+            + `<text x="232" y="${y}" class="metric">${segment.label}</text>`
+            + `<text x="328" y="${y}" class="count" text-anchor="end">`
+            + `${percentage}%</text>`;
+    });
+
+    return buildCardSvg(
+        "Solved problems by difficulty",
+        `${difficultyCounts.Easy} easy, ${difficultyCounts.Medium} medium, `
+            + `${difficultyCounts.Hard} hard. Open the LeetCode profile.`,
+        [
+            "<text x=\"32\" y=\"45\" class=\"heading\">Difficulty</text>",
+            slices,
+            "<circle cx=\"112\" cy=\"166\" r=\"34\" fill=\"#141321\"/>",
+            ...legend,
+            "<text x=\"328\" y=\"326\" class=\"link\" text-anchor=\"end\">View profile ↗</text>"
+        ]
     );
-
-    return [
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"760\" height=\"570\" viewBox=\"0 0 760 570\" role=\"img\" aria-labelledby=\"title desc\">",
-        `<title id="title">${accessibleTitle}</title>`,
-        `<desc id="desc">LeetBridge progress, language summary, and difficulty pie chart${escapeXmlText(moreLanguages)}</desc>`,
-        "<defs>",
-        "<linearGradient id=\"accent\" x1=\"0\" x2=\"1\"><stop stop-color=\"#ff2e88\"/><stop offset=\"1\" stop-color=\"#8b5cf6\"/></linearGradient>",
-        "<clipPath id=\"language-bar\"><rect x=\"32\" y=\"208\" width=\"696\" height=\"10\" rx=\"5\"/></clipPath>",
-        "<style>",
-        ".heading{font:600 22px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#ff4b91}",
-        ".eyebrow{font:600 11px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:1.2px;fill:#8b949e}",
-        ".total{font:700 44px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#f0f6fc}",
-        ".metric{font:700 25px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#f0f6fc}",
-        ".label{font:500 13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#b7c0ca}",
-        ".legend{font:500 13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#dbe4ee}",
-        ".legend-count{font:600 13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#8b949e}",
-        ".difficulty-label{font:600 15px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#dbe4ee}",
-        ".difficulty-share{font:600 15px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#b7c0ca}",
-        "</style>",
-        "</defs>",
-        "<rect x=\"1\" y=\"1\" width=\"758\" height=\"568\" rx=\"12\" fill=\"#141321\" stroke=\"#30363d\"/>",
-        "<rect x=\"1\" y=\"1\" width=\"758\" height=\"4\" rx=\"2\" fill=\"url(#accent)\"/>",
-        "<text x=\"32\" y=\"45\" class=\"heading\">LeetBridge Progress</text>",
-        "<text x=\"32\" y=\"83\" class=\"eyebrow\">PROBLEMS SOLVED</text>",
-        `<text x="32" y="132" class="total">${entries.length}</text>`,
-        "<line x1=\"242\" y1=\"72\" x2=\"242\" y2=\"143\" stroke=\"#30363d\"/>",
-        "<text x=\"284\" y=\"83\" class=\"eyebrow\">EASY</text>",
-        `<text x="284" y="120" class="metric">${difficultyCounts.Easy}</text>`,
-        "<circle cx=\"410\" cy=\"112\" r=\"5\" fill=\"#00b8a3\"/>",
-        "<text x=\"440\" y=\"83\" class=\"eyebrow\">MEDIUM</text>",
-        `<text x="440" y="120" class="metric">${difficultyCounts.Medium}</text>`,
-        "<circle cx=\"566\" cy=\"112\" r=\"5\" fill=\"#ffc01e\"/>",
-        "<text x=\"596\" y=\"83\" class=\"eyebrow\">HARD</text>",
-        `<text x="596" y="120" class="metric">${difficultyCounts.Hard}</text>`,
-        "<circle cx=\"722\" cy=\"112\" r=\"5\" fill=\"#ef4743\"/>",
-        "<text x=\"32\" y=\"190\" class=\"eyebrow\">SOLUTION LANGUAGES</text>",
-        `<text x="728" y="190" class="label" text-anchor="end">${totalSolutions} files${escapeXmlText(moreLanguages)}</text>`,
-        "<rect x=\"32\" y=\"208\" width=\"696\" height=\"10\" rx=\"5\" fill=\"#262438\"/>",
-        `<g clip-path="url(#language-bar)">${buildSegmentedBar(languageSegments, totalSolutions, 208)}</g>`,
-        languageLegend,
-        "<line x1=\"32\" y1=\"326\" x2=\"728\" y2=\"326\" stroke=\"#30363d\"/>",
-        "<text x=\"32\" y=\"365\" class=\"heading\">Difficulty Mix</text>",
-        "<text x=\"334\" y=\"380\" class=\"eyebrow\">DIFFICULTY</text>",
-        "<text x=\"704\" y=\"380\" class=\"eyebrow\" text-anchor=\"end\">SHARE</text>",
-        pieSlices,
-        difficultyLegend,
-        "</svg>",
-        ""
-    ].join("\n");
 }
 
 function buildProblemReadme(problem, solutions) {
@@ -395,13 +575,51 @@ function parseRootReadmeEntries(readme) {
     const entries = [];
 
     for (const line of generatedSection.split(/\r?\n/)) {
+        const svgProblemMatch = line.match(
+            /^<tr><td[^>]*><a href="https:\/\/leetcode\.com\/problems\/([a-z0-9-]+)\/"><img [^>]*alt="([^"]+)"[^>]*><\/a><\/td><td[^>]*>(?:<picture>)?<img [^>]*alt="([^"]+)"[^>]*>(?:<\/picture>)?<\/td><td[^>]*>(.*)<\/td><\/tr>$/
+        );
+
+        if (svgProblemMatch) {
+            const problemLabel = unescapeXmlText(svgProblemMatch[2]);
+            const problemMatch = problemLabel.match(/^(\d+|N\/A)\s+·\s+(.+)$/);
+
+            if (!problemMatch) {
+                continue;
+            }
+
+            const solutions = [];
+            const solutionPattern = /<a href="([^"]+)"><img [^>]*alt="([^"]+)"[^>]*><\/a>/g;
+            let solutionMatch = solutionPattern.exec(svgProblemMatch[4]);
+
+            while (solutionMatch) {
+                solutions.push({
+                    language: unescapeXmlText(solutionMatch[2]),
+                    path: unescapeXmlText(solutionMatch[1])
+                });
+                solutionMatch = solutionPattern.exec(svgProblemMatch[4]);
+            }
+
+            entries.push({
+                number: problemMatch[1] === "N/A"
+                    ? null
+                    : Number(problemMatch[1]),
+                slug: svgProblemMatch[1],
+                title: problemMatch[2],
+                difficulty: normalizeDifficulty(
+                    unescapeXmlText(svgProblemMatch[3])
+                ),
+                solutions
+            });
+            continue;
+        }
+
         const htmlProblemMatch = line.match(
-            /^<tr><td><a href="https:\/\/leetcode\.com\/problems\/([a-z0-9-]+)\/"><strong>(\d+)\s+·\s+(.+)<\/strong><\/a><\/td><td>[^<]*<strong>([^<]+)<\/strong><\/td><td>(.*)<\/td><\/tr>$/
+            /^<tr><td><a href="https:\/\/leetcode\.com\/problems\/([a-z0-9-]+)\/">(?:<kbd>)?<strong>(\d+)\s+·\s+(.+)<\/strong>(?:<\/kbd>)?<\/a><\/td><td>(?:<kbd>)?[^<]*<strong>([^<]+)<\/strong>(?:<\/kbd>)?<\/td><td>(.*)<\/td><\/tr>$/
         );
 
         if (htmlProblemMatch) {
             const solutions = [];
-            const solutionPattern = /<a href="([^"]+)">([^<]+)<\/a>/g;
+            const solutionPattern = /<a href="([^"]+)">(?:<kbd>)?([^<]+)(?:<\/kbd>)?<\/a>/g;
             let solutionMatch = solutionPattern.exec(htmlProblemMatch[5]);
 
             while (solutionMatch) {
@@ -508,42 +726,81 @@ function mergeProblemEntry(entries, problem, solutions) {
     });
 }
 
-function buildRootReadmeSection(entries) {
-    const { difficultyCounts } = summarizeEntries(entries);
+function buildRootReadmeSection(
+    entries,
+    repository = null,
+    leetcodeUsername = null
+) {
+    const { difficultyCounts, languages } = summarizeEntries(entries);
     const solutionRows = entries.map((entry) => {
         const number = entry.number
             ? String(entry.number).padStart(4, "0")
             : "N/A";
+        const problemLabel = `${number} · ${normalizeInlineText(
+            entry.title,
+            entry.slug
+        )}`;
+        const difficulty = normalizeDifficulty(entry.difficulty);
         const solutions = entry.solutions.map((solution) => (
             `<a href="${escapeXmlText(solution.path)}">`
-            + `${escapeXmlText(solution.language)}</a>`
-        )).join("&nbsp; · &nbsp;");
+            + `<img src="${getArchiveAssetSource(
+                getArchiveLanguageCardPath(solution.language)
+            )}" alt="${escapeXmlText(solution.language)}" `
+            + "width=\"100%\"></a>"
+        )).join("<br>");
 
-        return `<tr><td><a href="https://leetcode.com/problems/${entry.slug}/">`
-            + `<strong>${number} · ${escapeXmlText(entry.title)}</strong></a>`
-            + `</td><td>${getDifficultyIcon(entry.difficulty)} `
-            + `<strong>${escapeXmlText(entry.difficulty)}</strong></td>`
-            + `<td>${solutions || "None"}</td></tr>`;
+        return `<tr><td width="53%"><a href="https://leetcode.com/problems/${entry.slug}/">`
+            + `<img src="${getArchiveAssetSource(
+                getArchiveProblemCardPath(entry)
+            )}" alt="${escapeXmlText(problemLabel)}" width="100%"></a>`
+            + `</td><td width="17%"><picture><img src="${getArchiveAssetSource(
+                getArchiveDifficultyCardPath(difficulty)
+            )}" alt="${escapeXmlText(difficulty)}" width="100%"></picture></td>`
+            + `<td width="30%">${solutions || "None"}</td></tr>`;
     });
     const problemLabel = entries.length === 1 ? "problem" : "problems";
+    const primaryLanguage = languages[0]?.[0] ?? null;
+    const repositoryUrl = repository?.owner && repository?.name
+        ? `https://github.com/${encodeURIComponent(repository.owner)}/`
+            + encodeURIComponent(repository.name)
+        : null;
+    const languageUrl = repositoryUrl && primaryLanguage
+        ? languages.length > 1
+            ? repositoryUrl
+            : `${repositoryUrl}/search?q=language%3A`
+                + `${encodeURIComponent(primaryLanguage)}&type=code`
+        : "#solution-archive";
+    const normalizedUsername = typeof leetcodeUsername === "string"
+        ? leetcodeUsername.trim()
+        : "";
+    const difficultyUrl = normalizedUsername
+        ? `https://leetcode.com/u/${encodeURIComponent(normalizedUsername)}/`
+        : "https://leetcode.com/problemset/";
 
     return [
         SOLUTIONS_START_MARKER,
         "",
         "<p align=\"center\">",
-        `  <img src="${SUMMARY_CARD_PATH}" alt="${entries.length} solved: `
+        `<a href="#solution-archive"><img src="${PROGRESS_CARD_PATH}" alt="${entries.length} solved: `
             + `${difficultyCounts.Easy} Easy, `
             + `${difficultyCounts.Medium} Medium, `
-            + `${difficultyCounts.Hard} Hard" width="760">`,
+            + `${difficultyCounts.Hard} Hard" width="33.333%"></a>`
+            + `<a href="${escapeXmlText(languageUrl)}"><img `
+            + `src="${LANGUAGES_CARD_PATH}" alt="Solution languages" `
+            + "width=\"33.333%\"></a>"
+            + `<a href="${escapeXmlText(difficultyUrl)}"><img `
+            + `src="${DIFFICULTY_CARD_PATH}" alt="Difficulty breakdown" `
+            + "width=\"33.333%\"></a>",
         "</p>",
         "",
-        "<table width=\"100%\">",
-        "<thead>",
-        `<tr><th align="left" colspan="3"><strong>Solution Archive</strong>`
-            + `<br><sub>${entries.length} accepted ${problemLabel} synced by `
-            + "LeetBridge</sub></th></tr>",
-        "<tr><th align=\"left\">Problem</th><th align=\"left\">Difficulty</th><th align=\"left\">Solutions</th></tr>",
-        "</thead>",
+        ARCHIVE_CELL_VERSION_MARKER,
+        "<a name=\"solution-archive\"></a>",
+        "<p align=\"center\"><picture>",
+        `<img src="${getArchiveAssetSource(ARCHIVE_HEADER_CARD_PATH)}" alt="Solution Archive: `
+            + `${entries.length} accepted ${problemLabel} synced by LeetBridge" `
+            + "width=\"100%\">",
+        "</picture></p>",
+        "<table align=\"center\" width=\"100%\">",
         "<tbody>",
         ...solutionRows,
         "</tbody>",

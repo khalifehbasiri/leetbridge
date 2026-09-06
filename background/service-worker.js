@@ -297,9 +297,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         return sendTrustedResponse(async () => {
-            const stored = await chrome.storage.local.get(
-                GITHUB_REPOSITORY_KEY
-            );
+            const stored = await chrome.storage.local.get([
+                GITHUB_REPOSITORY_KEY,
+                CURRENT_DATA_KEY
+            ]);
             const repository = stored[GITHUB_REPOSITORY_KEY];
 
             if (!repository) {
@@ -307,7 +308,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
 
             const result = await queueGitHubOperation(() => (
-                rebuildRepositoryReadme(repository)
+                rebuildRepositoryReadme(
+                    repository,
+                    stored[CURRENT_DATA_KEY]?.username ?? null
+                )
             ));
 
             return { result };

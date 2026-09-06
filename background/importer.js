@@ -196,7 +196,8 @@ async function completeHistoricalImport(message, sender) {
     let result = null;
     if (settings.updateReadme) {
         result = await queueGitHubOperation(() => rebuildRepositoryReadme(
-            stored[GITHUB_REPOSITORY_KEY]
+            stored[GITHUB_REPOSITORY_KEY],
+            state.checkpoint.username
         ));
     }
     return updateHistoricalImportState({

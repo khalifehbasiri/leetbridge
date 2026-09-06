@@ -45,16 +45,32 @@ Example output:
 ```text
 README.md
 .leetbridge/
-└── summary.svg
+├── archive/
+│   ├── difficulties/
+│   │   ├── easy.svg
+│   │   ├── hard.svg
+│   │   └── medium.svg
+│   ├── languages/
+│   │   └── python-<id>.svg
+│   ├── problems/
+│   │   └── 0001-two-sum.svg
+│   └── header.svg
+├── difficulty.svg
+├── languages.svg
+└── progress.svg
 0001-two-sum/
 ├── README.md
 └── solution.py
 ```
 
-The repository README displays one generated progress card containing language
-and difficulty visuals, followed by a clickable solution archive. The card is
-stored in `.leetbridge/summary.svg` in the solutions repository, so it does not
-depend on an external stats service. Content outside the `SOLUTIONS_START` and
+The repository README displays linked progress, language, and difficulty cards,
+followed by a clickable solution archive. The cards are stored in the
+`.leetbridge` directory in the solutions repository, so they do not depend on
+an external stats service. The language card expands to a ranked, segmented
+view when solutions use multiple languages, the difficulty card opens the
+owner's LeetCode profile, and the archive is assembled from matching SVG
+components. Its problem and language cards retain their individual LeetCode
+and solution-file links. Content outside the `SOLUTIONS_START` and
 `SOLUTIONS_END` markers is preserved when LeetBridge refreshes the generated
 section.
 
