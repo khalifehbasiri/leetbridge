@@ -10,6 +10,9 @@ function createGitHubHeaders(token, additionalHeaders = {}) {
 async function githubApiRequest(path, options = {}, retry = true) {
     const token = await getValidGitHubToken();
     const response = await fetch(`${GITHUB_CONFIG.apiBaseUrl}${path}`, {
+        // Branch heads and Contents responses can be cached by Chrome. A sync
+        // must observe the latest GitHub state, especially after a recent push.
+        cache: "no-store",
         ...options,
         headers: createGitHubHeaders(token, options.headers)
     });
@@ -286,14 +289,23 @@ function getRepositoryContentsPath(repository, path) {
 }
 
 async function getGitHubContent(repository, path) {
+    if (repository.batch?.contents.has(path)) {
+        return repository.batch.contents.get(path);
+    }
+
     const contentsPath = getRepositoryContentsPath(repository, path);
 
     try {
-        return await githubApiRequest(
-            `${contentsPath}?ref=${encodeURIComponent(repository.defaultBranch)}`
+        const content = await githubApiRequest(
+            `${contentsPath}?ref=${encodeURIComponent(
+                repository.batch?.baseCommit ?? repository.defaultBranch
+            )}`
         );
+        repository.batch?.contents.set(path, content);
+        return content;
     } catch (error) {
         if (error.status === 404) {
+            repository.batch?.contents.set(path, null);
             return null;
         }
 
@@ -317,6 +329,13 @@ async function upsertGitHubFile(repository, path, content, message) {
         && decodeUtf8Base64(existingFile.content) === content
     ) {
         return { changed: false, commitUrl: null };
+    }
+
+    if (repository.batch) {
+        repository.batch.changes.set(path, {
+            path, mode: "100644", type: "blob", content
+        });
+        return { changed: true, commitUrl: null };
     }
 
     const requestBody = {
@@ -354,6 +373,13 @@ async function deleteGitHubFileIfExists(repository, path, message) {
 
         if (Array.isArray(existingFile)) {
             throw new Error(`${path} is a directory, not a file`);
+        }
+
+        if (repository.batch) {
+            repository.batch.changes.set(path, {
+                path, mode: "100644", type: "blob", sha: null
+            });
+            return { changed: true, commitUrl: null };
         }
 
         try {
@@ -400,6 +426,65 @@ async function listGitHubDirectory(repository, path) {
     }
 
     return contents;
+}
+
+// Prepare against an immutable commit, then publish every staged file together.
+// On a competing push, regenerate from the new head so index entries are retained.
+async function commitGitHubFileBatch(repository, message, prepare) {
+    const apiPath = `/repos/${encodeURIComponent(repository.owner)}`
+        + `/${encodeURIComponent(repository.name)}/git`;
+    const branchPath = `heads/${encodeGitHubPath(repository.defaultBranch)}`;
+    const write = (path, method, body) => githubApiRequest(path, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+    });
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        const head = await githubApiRequest(`${apiPath}/ref/${branchPath}`);
+        const batch = {
+            baseCommit: head.object.sha,
+            changes: new Map(),
+            contents: new Map()
+        };
+        const result = await prepare({ ...repository, batch });
+
+        if (batch.changes.size === 0) {
+            return { result, changed: false, commitUrl: null };
+        }
+
+        const parent = await githubApiRequest(
+            `${apiPath}/commits/${head.object.sha}`
+        );
+        const tree = await write(`${apiPath}/trees`, "POST", {
+            base_tree: parent.tree.sha,
+            tree: [...batch.changes.values()]
+        });
+        const commit = await write(`${apiPath}/commits`, "POST", {
+            message,
+            tree: tree.sha,
+            parents: [batch.baseCommit]
+        });
+
+        try {
+            await write(`${apiPath}/refs/${branchPath}`, "PATCH", {
+                sha: commit.sha,
+                force: false
+            });
+        } catch (error) {
+            if (attempt < 2 && [409, 422].includes(error?.status)) {
+                const latest = await githubApiRequest(
+                    `${apiPath}/ref/${branchPath}`
+                );
+                if (latest.object.sha !== batch.baseCommit) {
+                    continue;
+                }
+            }
+            throw error;
+        }
+
+        return { result, changed: true, commitUrl: commit.html_url ?? null };
+    }
 }
 
 function getCommitSubject(problem) {
@@ -899,37 +984,52 @@ async function performAcceptedSolutionSync(data, options) {
         return { skipped: true, reason: "Solution is already synced" };
     }
 
-    const solutionResult = await upsertGitHubFile(
+    // A code-only sync already needs just one Contents API commit.
+    const batchResult = !options.updateProblemReadme && !options.updateRootReadme
+        ? {
+            result: {},
+            ...await upsertGitHubFile(
+                repository, filePath, data.submission.code,
+                getCommitSubject(data.problem)
+            )
+        }
+        : await commitGitHubFileBatch(
         repository,
-        filePath,
-        data.submission.code,
-        getCommitSubject(data.problem)
+        getCommitSubject(data.problem),
+        async (batchRepository) => {
+            await upsertGitHubFile(
+                batchRepository,
+                filePath,
+                data.submission.code,
+                getCommitSubject(data.problem)
+            );
+
+            let solutions = [];
+            if (options.updateProblemReadme || options.updateRootReadme) {
+                solutions = await getProblemSolutions(
+                    batchRepository,
+                    folder,
+                    data.submission.language
+                );
+                // The new solution is staged and not visible in GitHub yet.
+                if (!solutions.some((solution) => solution.path === filePath)) {
+                    solutions.push({
+                        language: getLanguageDetails(data.submission.language).name,
+                        path: filePath
+                    });
+                    solutions.sort((first, second) => (
+                        first.language.localeCompare(second.language)
+                    ));
+                }
+            }
+
+            return updateRepositoryReadmes(
+                batchRepository, data, folder, solutions, options
+            );
+        }
     );
-    let readmeResults = {
-        problemReadmePath: `${folder}/README.md`,
-        problemResult: null,
-        rootResult: null
-    };
-
-    if (options.updateProblemReadme || options.updateRootReadme) {
-        const solutions = await getProblemSolutions(
-            repository,
-            folder,
-            data.submission.language
-        );
-
-        readmeResults = await updateRepositoryReadmes(
-            repository,
-            data,
-            folder,
-            solutions,
-            options
-        );
-    }
-
-    const commitUrl = readmeResults.rootResult?.commitUrl
-        ?? readmeResults.problemResult?.commitUrl
-        ?? solutionResult.commitUrl;
+    const readmeResults = batchResult.result;
+    const commitUrl = batchResult.commitUrl;
     const syncResult = {
         ok: true,
         repository: repository.fullName,

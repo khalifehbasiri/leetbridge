@@ -13,6 +13,7 @@ repository selected by the user.
 - Detects the current LeetCode problem, difficulty, user, and submission state.
 - Captures the language and exact source code only when the user submits it.
 - Syncs accepted solutions directly from Chrome to GitHub.
+- Commits each accepted solution and its generated README/cards together.
 - Prevents duplicate syncs using LeetCode submission IDs.
 - Maintains problem READMEs and a repository-wide, clickable solution archive.
 - Generates matching Progress, Languages, and Difficulty SVG cards without
@@ -35,7 +36,7 @@ Content scripts normalize problem and submission data
         ↓
 Background service worker stores the current state
         ↓
-GitHub Contents API writes the solution and generated indexes
+GitHub Git Database API commits the solution and generated indexes together
         ↓
 <four-digit-number>-<slug>/
 ├── README.md
@@ -129,6 +130,12 @@ Read the complete [privacy policy](PRIVACY.md) and
 4. Choose **Load unpacked** and select this repository.
 5. Open a LeetCode problem and inspect LeetBridge from the toolbar.
 
+Run regression tests with `node --test tests/*.test.cjs`. Compare API request
+counts with the previous uploader using `node tests/benchmark-sync.cjs`.
+The opt-in `tests/browser-live-sync.cjs` test uses an isolated Chrome profile
+and the current GitHub CLI login; it creates and removes a temporary test
+branch in the repository explicitly passed to it.
+
 ## Project structure
 
 ```text
@@ -141,7 +148,8 @@ resources/    Runtime extension icons and artwork
 
 ## Status
 
-Version 1.0.3 includes live accepted-submission syncing, the SVG repository
+Version 1.0.4 commits each accepted submission and its generated files together,
+while retaining the lightweight code-only upload path. It includes the SVG repository
 dashboard and archive, resumable historical import, README conflict recovery,
 repository rebuild tools, and guided onboarding. The LeetCode interface can
 change, so selectors and submission detection are reviewed before each store
